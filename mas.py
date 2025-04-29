@@ -12,7 +12,7 @@ class DecisionMakerAgent(Agent):
     class SendTarget(OneShotBehaviour):
         async def run(self):
             print("Decision maker sending the target...")
-            data = 1
+            data = 2
             msg = Message(
                 to="preferenceagent@localhost",
                 body=f"{data}",
@@ -34,20 +34,20 @@ class PreferenceAgent(Agent):
 
     class ReceiveExplanations(CyclicBehaviour):
         async def run(self):
-            print("Preference agent ready to receive explanations.")
+            print("Explanation gatherer ready to receive explanations.")
             msg = await self.receive(timeout=10)
             if msg:
-                print("Preference agent received explanations: {}".format(msg.body))
+                print("Explanation gatherer received explanations: {}".format(msg.body))
             else:
-                print("Preference agent has not received a message after 10 seconds.")
+                print("Explanation gatherer has not received a message after 10 seconds.")
                 self.kill()
 
     class ReceiveTarget(CyclicBehaviour):
         async def run(self):
-            print("Preference agent ready to receive target.")
+            print("Explanation gatherer ready to receive target.")
             msg = await self.receive(timeout=10)
             if msg:
-                print("Preference agent received the target: {}".format(msg.body))
+                print("Explanation gatherer received the target: {}".format(msg.body))
                 self.agent.add_behaviour(PreferenceAgent.EmployTarget(msg.body))
 
     class EmployTarget(OneShotBehaviour):
@@ -56,7 +56,7 @@ class PreferenceAgent(Agent):
             self.target = target
 
         async def run(self):
-            print("Preference agent employing the target...")
+            print("Explanation gatherer employing the target...")
             data = {"something": 10}
             msg = Message(
                 to=f"explanationagent{self.target}@localhost",
@@ -73,13 +73,13 @@ class PreferenceAgent(Agent):
             self.n_objectives = n_objectives
 
         async def run(self):
-            print(f"Preference agent creating {self.n_objectives} explainers...")
+            print(f"Explanation gatherer creating {self.n_objectives} explainers...")
             for i in range(self.n_objectives):
-                explanationAgent = ExplanationAgent(f"explanationagent{i}@localhost", "explainer")
+                explanationAgent = ExplanationAgent(f"explanationagent{i}@localhost", "explainer", objective=i)
                 await explanationAgent.start(auto_register=True)
 
     async def setup(self):
-        print("Preference agent started.")
+        print("Explanation gatherer started.")
         self.createExplainers = self.CreateExplainers(n_objectives=self.n_objectives)
         self.add_behaviour(self.createExplainers)
         receiveExplanations = self.ReceiveExplanations()
@@ -89,16 +89,21 @@ class PreferenceAgent(Agent):
 
 
 class ExplanationAgent(Agent):
+    def __init__(self, jid, password, objective: int, port = 5222, verify_security = False, **kwargs):
+        super().__init__(jid, password, port, verify_security, **kwargs)
+        self.objective = objective
+        self.rival = (objective + 1) % 3
+
     class SendExplanations(OneShotBehaviour):
         def __init__(self, data, **kwargs):
             super().__init__(**kwargs)
             self.data = data
 
         async def run(self):
-            print(f"Explanation agent {self.agent.jid.username} sending explanations...")
+            print(f"{self.agent.jid.username} sending explanations...")
             msg = Message(
                 to="preferenceagent@localhost",
-                body=f"These are the explanations based on this data: {self.data}.",
+                body=f"These are the explanations based on this data: {self.data}. To improve objective {self.agent.objective}, you need to impair objective {self.agent.rival}.",
                 metadata={"performative": "explanations"}
             )
 
@@ -108,35 +113,38 @@ class ExplanationAgent(Agent):
             self.exit_code = "Explanations sent"
 
     class ReceiveData(CyclicBehaviour):
+        def __init__(self):
+            super().__init__()
+
         async def run(self):
-            print(f"Explanation agent {self.agent.jid.username} ready to receive data.")
+            print(f"{self.agent.jid.username} ready to receive data.")
             msg = await self.receive(timeout=10)
             if msg:
                 data = json.loads(msg.body)
-                print("Explanation agent {} received data: {}".format(self.agent.jid.username, data))
+                print(f"{self.agent.jid.username} received data: {data}")
                 self.agent.add_behaviour(ExplanationAgent.SendExplanations(data))
             else:
-                print("Explanation agent has not received a message after 10 seconds.")
+                print(f"{self.agent.jid.username} has not received a message after 10 seconds.")
                 self.kill()
 
     async def setup(self):
-        print(f"Explanation agent {self.jid.username} started.")
+        print(f"{self.jid.username} started.")
         receiveData = self.ReceiveData()
         self.add_behaviour(receiveData, Template(metadata={"performative": "target"}))
 
 async def main(n_objectives: int):
-    """for i in range(n_objectives):
-        explanationAgent = ExplanationAgent(f"explanationagent{i}@localhost", "explainer")
-        await explanationAgent.start(auto_register=True)"""
-
+    # initialize and start a preference agent
     preferenceAgent = PreferenceAgent("preferenceagent@localhost", "preference", n_objectives=n_objectives)
     await preferenceAgent.start(auto_register=True)
 
     # wait for the explainers to be created and started
     await preferenceAgent.createExplainers.join()
 
+    # initialize and start a (dummy) decision maker
     decisionMaker = DecisionMakerAgent("decisionmaker@localhost", "decisionmaker")
     await decisionMaker.start(auto_register=True)
 
 if __name__ == "__main__":
+    # run the multi-agent system with three objectives (i.e., three explainers)
+    # NOTE: the number of objectives should come from the problem
     spade.run(main(n_objectives=3))
