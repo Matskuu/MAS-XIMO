@@ -39,7 +39,7 @@ class PreferenceAgent(Agent):
             if msg:
                 print("Explanation gatherer received explanations: {}".format(msg.body))
             else:
-                print("Explanation gatherer has not received a message after 10 seconds.")
+                print("Explanation gatherer has not received explanations after 10 seconds.")
                 self.kill()
 
     class ReceiveTarget(CyclicBehaviour):
@@ -49,6 +49,9 @@ class PreferenceAgent(Agent):
             if msg:
                 print("Explanation gatherer received the target: {}".format(msg.body))
                 self.agent.add_behaviour(PreferenceAgent.EmployTarget(msg.body))
+            else:
+                print("Explanation gatherer has not received a target after 10 seconds.")
+                self.kill()
 
     class EmployTarget(OneShotBehaviour):
         def __init__(self, target, **kwargs):
@@ -143,6 +146,14 @@ async def main(n_objectives: int):
     # initialize and start a (dummy) decision maker
     decisionMaker = DecisionMakerAgent("decisionmaker@localhost", "decisionmaker")
     await decisionMaker.start(auto_register=True)
+
+    try:
+        while True:
+            await asyncio.sleep(1)
+    except KeyboardInterrupt:
+        print("Stopping agents...")
+        await preferenceAgent.stop()
+        await decisionMaker.stop()
 
 if __name__ == "__main__":
     # run the multi-agent system with three objectives (i.e., three explainers)
