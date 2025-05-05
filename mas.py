@@ -1,5 +1,6 @@
 import asyncio
 import json
+import random
 import spade
 from spade import wait_until_finished
 from spade.agent import Agent
@@ -8,26 +9,26 @@ from spade.message import Message
 from spade.template import Template
 
 
-class DecisionMakerAgent(Agent):
+class ForestOwner(Agent):
     class SendTarget(OneShotBehaviour):
         async def run(self):
-            print("Decision maker sending the target...")
-            data = 2
+            print("Forest owner sending the target...")
+            target = random.randint(0, 2)
             msg = Message(
-                to="preferenceagent@localhost",
-                body=f"{data}",
+                to="explanationgatherer@localhost",
+                body=f"{target}",
                 metadata={"performative": "target_preference"}
             )
 
             await self.send(msg)
-            print("Target sent.")
+            print(f"Target sent: {target}.")
     
     async def setup(self):
-        print("Decision maker started.")
+        print("Forest owner started.")
         sendTarget = self.SendTarget()
         self.add_behaviour(sendTarget)
 
-class PreferenceAgent(Agent):
+class ExplanationGatherer(Agent):
     def __init__(self, jid, password, n_objectives, port = 5222, verify_security = False, **kwargs):
         super().__init__(jid, password, port, verify_security, **kwargs)
         self.n_objectives = n_objectives
@@ -37,7 +38,7 @@ class PreferenceAgent(Agent):
             print("Explanation gatherer ready to receive explanations.")
             msg = await self.receive(timeout=10)
             if msg:
-                print("Explanation gatherer received explanations: {}".format(msg.body))
+                print(f"Explanation gatherer received explanations: \n    {msg.body}")
             else:
                 print("Explanation gatherer has not received explanations after 10 seconds.")
                 self.kill()
@@ -48,7 +49,7 @@ class PreferenceAgent(Agent):
             msg = await self.receive(timeout=10)
             if msg:
                 print("Explanation gatherer received the target: {}".format(msg.body))
-                self.agent.add_behaviour(PreferenceAgent.EmployTarget(msg.body))
+                self.agent.add_behaviour(ExplanationGatherer.EmployTarget(msg.body))
             else:
                 print("Explanation gatherer has not received a target after 10 seconds.")
                 self.kill()
@@ -64,7 +65,7 @@ class PreferenceAgent(Agent):
             msg = Message(
                 to=f"explanationagent{self.target}@localhost",
                 body=json.dumps(data),
-                metadata={"performative": "target"}
+                metadata={"performative": "data"}
             )
 
             await self.send(msg)
@@ -78,7 +79,7 @@ class PreferenceAgent(Agent):
         async def run(self):
             print(f"Explanation gatherer creating {self.n_objectives} explainers...")
             for i in range(self.n_objectives):
-                explanationAgent = ExplanationAgent(f"explanationagent{i}@localhost", "explainer", objective=i)
+                explanationAgent = ExplanationAgent(f"explanationagent{i}@localhost", "explainer", objective=i, n_objectives=self.n_objectives)
                 await explanationAgent.start(auto_register=True)
 
     async def setup(self):
@@ -92,10 +93,11 @@ class PreferenceAgent(Agent):
 
 
 class ExplanationAgent(Agent):
-    def __init__(self, jid, password, objective: int, port = 5222, verify_security = False, **kwargs):
+    def __init__(self, jid, password, objective: int, n_objectives: int, port = 5222, verify_security = False, **kwargs):
         super().__init__(jid, password, port, verify_security, **kwargs)
         self.objective = objective
-        self.rival = (objective + 1) % 3
+        self.n_objectives = n_objectives
+        self.rival = (objective + 1) % n_objectives
 
     class SendExplanations(OneShotBehaviour):
         def __init__(self, data, **kwargs):
@@ -105,8 +107,8 @@ class ExplanationAgent(Agent):
         async def run(self):
             print(f"{self.agent.jid.username} sending explanations...")
             msg = Message(
-                to="preferenceagent@localhost",
-                body=f"These are the explanations based on this data: {self.data}. To improve objective {self.agent.objective}, you need to impair objective {self.agent.rival}.",
+                to="explanationgatherer@localhost",
+                body=f"These are the explanations based on this data: {self.data}.\n    To improve objective {self.agent.objective}, you need to impair objective {self.agent.rival} by {self.data["something"] + self.agent.objective}.",
                 metadata={"performative": "explanations"}
             )
 
@@ -133,27 +135,27 @@ class ExplanationAgent(Agent):
     async def setup(self):
         print(f"{self.jid.username} started.")
         receiveData = self.ReceiveData()
-        self.add_behaviour(receiveData, Template(metadata={"performative": "target"}))
+        self.add_behaviour(receiveData, Template(metadata={"performative": "data"}))
 
 async def main(n_objectives: int):
-    # initialize and start a preference agent
-    preferenceAgent = PreferenceAgent("preferenceagent@localhost", "preference", n_objectives=n_objectives)
-    await preferenceAgent.start(auto_register=True)
+    # initialize and start an explanation gatherer
+    explanationGatherer = ExplanationGatherer("explanationgatherer@localhost", "preference", n_objectives=n_objectives)
+    await explanationGatherer.start(auto_register=True)
 
     # wait for the explainers to be created and started
-    await preferenceAgent.createExplainers.join()
+    await explanationGatherer.createExplainers.join()
 
-    # initialize and start a (dummy) decision maker
-    decisionMaker = DecisionMakerAgent("decisionmaker@localhost", "decisionmaker")
-    await decisionMaker.start(auto_register=True)
+    # initialize and start a forest owner
+    forestOwner = ForestOwner("forestowner@localhost", "forestowner")
+    await forestOwner.start(auto_register=True)
 
     try:
         while True:
             await asyncio.sleep(1)
     except KeyboardInterrupt:
         print("Stopping agents...")
-        await preferenceAgent.stop()
-        await decisionMaker.stop()
+        await explanationGatherer.stop()
+        await forestOwner.stop()
 
 if __name__ == "__main__":
     # run the multi-agent system with three objectives (i.e., three explainers)
