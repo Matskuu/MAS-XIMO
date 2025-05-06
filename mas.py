@@ -14,10 +14,11 @@ class ForestOwner(Agent):
         async def run(self):
             print("Forest owner sending the target...")
             target = random.randint(0, 2)
+            contents = {"target": target}
             msg = Message(
                 to="explanationgatherer@localhost",
-                body=f"{target}",
-                metadata={"performative": "target_preference"}
+                body=f"{json.dumps(contents)}",
+                metadata={"performative": "inform"}
             )
 
             await self.send(msg)
@@ -32,27 +33,21 @@ class ExplanationGatherer(Agent):
     def __init__(self, jid, password, n_objectives, port = 5222, verify_security = False, **kwargs):
         super().__init__(jid, password, port, verify_security, **kwargs)
         self.n_objectives = n_objectives
-
-    class ReceiveExplanations(CyclicBehaviour):
-        async def run(self):
-            print("Explanation gatherer ready to receive explanations.")
-            msg = await self.receive(timeout=10)
-            if msg:
-                print(f"Explanation gatherer received explanations: \n    {msg.body}")
-            else:
-                print("Explanation gatherer has not received explanations after 10 seconds.")
-                self.kill()
-
-    class ReceiveTarget(CyclicBehaviour):
+    
+    class ReceiveInformMessages(CyclicBehaviour):
         async def run(self):
             print("Explanation gatherer ready to receive target.")
             msg = await self.receive(timeout=10)
             if msg:
-                print("Explanation gatherer received the target: {}".format(msg.body))
-                self.agent.add_behaviour(ExplanationGatherer.EmployTarget(msg.body))
+                contents = json.loads(msg.body)
+                if "target" in contents:
+                    print(f"Explanation gatherer received the target: {contents["target"]}")
+                    self.agent.add_behaviour(ExplanationGatherer.EmployTarget(contents["target"]))
+                elif "explanation" in contents:
+                    print(f"Explanation gatherer received explanations: \n    {contents["explanation"]}")
             else:
                 print("Explanation gatherer has not received a target after 10 seconds.")
-                self.kill()
+                #self.kill()
 
     class EmployTarget(OneShotBehaviour):
         def __init__(self, target, **kwargs):
@@ -65,7 +60,7 @@ class ExplanationGatherer(Agent):
             msg = Message(
                 to=f"explanationagent{self.target}@localhost",
                 body=json.dumps(data),
-                metadata={"performative": "data"}
+                metadata={"performative": "inform"}
             )
 
             await self.send(msg)
@@ -86,10 +81,8 @@ class ExplanationGatherer(Agent):
         print("Explanation gatherer started.")
         self.createExplainers = self.CreateExplainers(n_objectives=self.n_objectives)
         self.add_behaviour(self.createExplainers)
-        receiveExplanations = self.ReceiveExplanations()
-        self.add_behaviour(receiveExplanations, Template(metadata={"performative": "explanations"}))
-        receiveTarget = self.ReceiveTarget()
-        self.add_behaviour(receiveTarget, Template(metadata={"performative": "target_preference"}))
+        receiveInformMessages = self.ReceiveInformMessages()
+        self.add_behaviour(receiveInformMessages, Template(metadata={"performative": "inform"}))
 
 
 class ExplanationAgent(Agent):
@@ -106,10 +99,13 @@ class ExplanationAgent(Agent):
 
         async def run(self):
             print(f"{self.agent.jid.username} sending explanations...")
+            contents = {
+                "explanation": f"These are the explanations based on this data: {self.data}.\n    To improve objective {self.agent.objective}, you need to impair objective {self.agent.rival} by {self.data["something"] + self.agent.objective}."
+            }
             msg = Message(
                 to="explanationgatherer@localhost",
-                body=f"These are the explanations based on this data: {self.data}.\n    To improve objective {self.agent.objective}, you need to impair objective {self.agent.rival} by {self.data["something"] + self.agent.objective}.",
-                metadata={"performative": "explanations"}
+                body=json.dumps(contents),
+                metadata={"performative": "inform"}
             )
 
             await self.send(msg)
@@ -135,12 +131,13 @@ class ExplanationAgent(Agent):
     async def setup(self):
         print(f"{self.jid.username} started.")
         receiveData = self.ReceiveData()
-        self.add_behaviour(receiveData, Template(metadata={"performative": "data"}))
+        self.add_behaviour(receiveData, Template(metadata={"performative": "inform"}))
 
 async def main(n_objectives: int):
     # initialize and start an explanation gatherer
     explanationGatherer = ExplanationGatherer("explanationgatherer@localhost", "preference", n_objectives=n_objectives)
     await explanationGatherer.start(auto_register=True)
+    explanationGatherer.web.start(hostname="127.0.0.1", port="10000")
 
     # wait for the explainers to be created and started
     await explanationGatherer.createExplainers.join()
