@@ -36,7 +36,7 @@ class ExplanationGatherer(Agent):
     
     class ReceiveInformMessages(CyclicBehaviour):
         async def run(self):
-            print("Explanation gatherer ready to receive target.")
+            print("Explanation gatherer ready to receive data.")
             msg = await self.receive(timeout=10)
             if msg:
                 contents = json.loads(msg.body)
@@ -48,6 +48,14 @@ class ExplanationGatherer(Agent):
             else:
                 print("Explanation gatherer has not received a target after 10 seconds.")
                 #self.kill()
+
+    class AcceptSubBehaviour(CyclicBehaviour):
+        async def run(self):
+            msg = await self.receive(timeout=10)
+            if msg:
+                if msg.metadata["performative"] == "subscribe":
+                    print(f"[{self.agent.name}] Subscription request from {msg.sender}")
+                    self.agent.client.send_presence_subscription(pto=str(msg.sender), ptype='subscribed')
 
     class EmployTarget(OneShotBehaviour):
         def __init__(self, target, **kwargs):
@@ -126,12 +134,13 @@ class ExplanationAgent(Agent):
                 self.agent.add_behaviour(ExplanationAgent.SendExplanations(data))
             else:
                 print(f"{self.agent.jid.username} has not received a message after 10 seconds.")
-                self.kill()
+                #self.kill()
 
     async def setup(self):
         print(f"{self.jid.username} started.")
         receiveData = self.ReceiveData()
         self.add_behaviour(receiveData, Template(metadata={"performative": "inform"}))
+        self.client.send_presence_subscription(pto="explanationgatherer@localhost")
 
 async def main(n_objectives: int):
     # initialize and start an explanation gatherer
