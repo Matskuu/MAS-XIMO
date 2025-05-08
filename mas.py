@@ -9,22 +9,112 @@ from spade.message import Message
 from spade.template import Template
 
 
+problem = {
+    "ideal": {"1": 2, "2": 3, "3": 4}
+}
+
+def solver(problem, reference_point):
+    return {"1": 1, "2": 2, "3": 3}
+
+class Solver(Agent):
+    def __init__(self, jid, password, solver, port = 5222, verify_security = False):
+        super().__init__(jid, password, port, verify_security)
+        self.problem = None
+        self.reference_point = None
+        self.solution = None
+        self.solver = solver
+
+    class SendSolution(OneShotBehaviour):
+        async def run(self):
+            print("Solver sending a solution...")
+            contents = {"solution": self.agent.solution}
+            msg = Message(
+                to="forestowner@localhost",
+                body=json.dumps(contents),
+                metadata={"performative": "inform"}
+            )
+            await self.send(msg)
+            print(f"Solution sent to forest owner: {self.agent.solution}")
+
+            contents = {
+                "solution": self.agent.solution,
+                "reference_point": self.agent.reference_point
+            }
+            msg = Message(
+                to="explanationgatherer@localhost",
+                body=json.dumps(contents),
+                metadata={"performative": "inform"}
+            )
+            await self.send(msg)
+            print(f"Solution and reference point sent to explanation gatherer: {contents}")
+            """recipients = ["forestowner@localhost", "explanationgatherer@localhost"]
+            for recipient in recipients:
+                contents = {"solution": self.agent.solution}
+                msg = Message(
+                    to=recipient,
+                    body=json.dumps(contents),
+                    metadata={"performative": "inform"}
+                )
+                await self.send(msg)
+                print(f"Solution sent: {self.agent.solution}")"""
+
+    class Solve(OneShotBehaviour):
+        async def run(self):
+            print("Solver solving the problem...")
+            self.agent.solution = self.agent.solver(self.agent.problem, self.agent.reference_point)
+            self.agent.add_behaviour(self.agent.SendSolution())
+
+    class ReceiveInformMessages(CyclicBehaviour):
+        async def run(self):
+            print("Solver waiting for messages.")
+            msg = await self.receive(timeout=10)
+            if msg:
+                contents = json.loads(msg.body)
+                if "problem" in contents:
+                    print(f"Solver received the problem: {contents["problem"]}.")
+                    self.agent.problem = contents["problem"]
+                    if self.agent.reference_point: # assuming we are solving the same problem for which the reference point is given
+                        self.agent.add_behaviour(self.agent.Solve())
+                    # TODO: maybe request for a reference point as well once the problem is received?
+                if "reference_point" in contents:
+                    print(f"Solver received reference point: {contents["reference_point"]}.")
+                    self.agent.reference_point = contents["reference_point"]
+                    if self.agent.problem:
+                        self.agent.add_behaviour(self.agent.Solve())
+                    else:
+                        self.agent.add_behaviour(self.agent.SendRequests(request_content="problem"))
+    
+    async def setup(self):
+        print("Solver started.")
+        receiveInformMessages = self.ReceiveInformMessages()
+        self.add_behaviour(receiveInformMessages, Template(metadata={"performative": "inform"}))
+
 class ForestOwner(Agent):
-    def __init__(self, jid, password, port = 5222, verify_security = False):
+    def __init__(self, jid, password, problem, port = 5222, verify_security = False):
         super().__init__(jid, password, port, verify_security)
         self.n_objectives = 3
         self.can_send_target = False
+        self.received_solution = False
+        self.problem = problem
 
     class ReceiveInformMessages(CyclicBehaviour):
         async def run(self):
             print("Forest owner waiting for messages.")
             msg = await self.receive(timeout=10)
             if msg:
-                if msg.body == "ready for target":
+                contents = json.loads(msg.body)
+                if "ready for target" in contents:
                     self.agent.can_send_target = True
-                    # TODO: do this when solver has sent a solution
+                    self.agent.add_behaviour(self.agent.SendData("problem"))
+                    self.agent.add_behaviour(self.agent.SendData("reference point"))
+                    if self.agent.received_solution:
+                        self.agent.add_behaviour(self.agent.SendData(content_type="target"))
+                        self.agent.received_solution = False
+                elif "solution" in contents:
+                    self.agent.received_solution = True
                     if self.agent.can_send_target:
                         self.agent.add_behaviour(self.agent.SendData(content_type="target"))
+                        self.agent.received_solution = False
 
     class ReceiveRequests(CyclicBehaviour):
         async def run(self):
@@ -48,7 +138,7 @@ class ForestOwner(Agent):
                 contents = {"target": target}
                 msg = Message(
                     to="explanationgatherer@localhost",
-                    body=f"{json.dumps(contents)}",
+                    body=json.dumps(contents),
                     metadata={"performative": "inform"}
                 )
                 await self.send(msg)
@@ -59,11 +149,31 @@ class ForestOwner(Agent):
                 contents = {"n_objectives": n_objectives}
                 msg = Message(
                     to="explanationgatherer@localhost",
-                    body=f"{json.dumps(contents)}",
+                    body=json.dumps(contents),
                     metadata={"performative": "inform"}
                 )
                 await self.send(msg)
                 print(f"Number of objectives sent: {n_objectives}.")
+            elif self.content_type == "problem":
+                print("Forest owner sending the problem...")
+                contents = {"problem": self.agent.problem}
+                msg = Message(
+                    to="solver@localhost",
+                    body=json.dumps(contents),
+                    metadata={"performative": "inform"}
+                )
+                await self.send(msg)
+                print(f"The problem sent: {self.agent.problem}.")
+            elif self.content_type == "reference point":
+                print("Forest owner sending a reference point...")
+                contents = {"reference_point": self.agent.problem["ideal"]}
+                msg = Message(
+                    to="solver@localhost",
+                    body=json.dumps(contents),
+                    metadata={"performative": "inform"}
+                )
+                await self.send(msg)
+                print(f"A reference point sent: {self.agent.problem["ideal"]}.")
     
     async def setup(self):
         print("Forest owner started.")
@@ -72,6 +182,8 @@ class ForestOwner(Agent):
         self.add_behaviour(receiveInformMessages, Template(metadata={"performative": "inform"}))
         receiveRequests = self.ReceiveRequests()
         self.add_behaviour(receiveRequests, Template(metadata={"performative": "request"}))
+        #self.add_behaviour(self.SendData("problem"))
+        #self.add_behaviour(self.SendData("reference point"))
         #sendTarget = self.SendTarget()
         #self.add_behaviour(sendTarget)
 
@@ -118,6 +230,8 @@ class ExplanationGatherer(Agent):
                 elif "n_objectives" in contents:
                     print(f"Explanation gatherer received the number of objectives : {contents["n_objectives"]}.")
                     self.agent.add_behaviour(self.agent.CreateExplainers(n_objectives=contents["n_objectives"]))
+                elif "solution" in contents:
+                    print(f"Explanation gatherer received a solution and reference point: {contents}")
             #else:
                 #print("Explanation gatherer has not received a target after 10 seconds.")
                 #self.kill()
@@ -151,7 +265,7 @@ class ExplanationGatherer(Agent):
                 await explanationAgent.start(auto_register=True)
             msg = Message(
                 to="forestowner@localhost",
-                body="ready for target",
+                body=json.dumps("ready for target"),
                 metadata={"performative": "inform"}
             )
             await self.send(msg)
@@ -215,14 +329,18 @@ class ExplanationAgent(Agent):
         self.add_behaviour(receiveData, Template(metadata={"performative": "inform"}))
 
 async def main(n_objectives: int):
+    # initialize and start the solver
+    solverAgent = Solver("solver@localhost", "solver", solver=solver)
+    await solverAgent.start(auto_register=True)
+
     # initialize and start a forest owner
-    forestOwner = ForestOwner("forestowner@localhost", "forestowner")
+    forestOwner = ForestOwner("forestowner@localhost", "forestowner", problem=problem)
     await forestOwner.start(auto_register=True)
 
     # initialize and start an explanation gatherer
     explanationGatherer = ExplanationGatherer("explanationgatherer@localhost", "preference", n_objectives=n_objectives)
     await explanationGatherer.start(auto_register=True)
-    explanationGatherer.web.start(hostname="127.0.0.1", port="10000")
+    #explanationGatherer.web.start(hostname="127.0.0.1", port="10000")
 
     # wait for the explainers to be created and started
     #await explanationGatherer.createExplainers.join()
