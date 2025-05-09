@@ -1,7 +1,9 @@
 import asyncio
 import json
 import random
+import re
 import spade
+
 from spade import wait_until_finished
 from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour, OneShotBehaviour
@@ -96,8 +98,22 @@ class ForestOwner(Agent):
         self.can_send_target = False
         self.received_solution = False
         self.problem = problem
+        self.reference_point = None
 
     class ReceiveInformMessages(CyclicBehaviour):
+        def get_updated_reference_point(self, explanation: str, previous_reference_point):
+            previous = previous_reference_point
+            if previous:
+                explanation_split = re.split(r"[ ,]+", explanation)
+                objective_to_improve = int(explanation_split[explanation_split.index("improve") + 2])
+                objective_to_impair = int(explanation_split[explanation_split.index("impair") + 2])
+                amount_to_impair = float(re.sub(r"\D+$", "", explanation_split[explanation_split.index("by") + 1]))
+                print(objective_to_improve, objective_to_impair, amount_to_impair)
+                new_reference_point = previous
+                new_reference_point["1"] = new_reference_point["1"] + amount_to_impair
+                print(new_reference_point)
+                return new_reference_point
+
         async def run(self):
             print("Forest owner waiting for messages.")
             msg = await self.receive(timeout=10)
@@ -106,7 +122,7 @@ class ForestOwner(Agent):
                 if "ready for target" in contents:
                     self.agent.can_send_target = True
                     self.agent.add_behaviour(self.agent.SendData("problem"))
-                    self.agent.add_behaviour(self.agent.SendData("reference point"))
+                    self.agent.add_behaviour(self.agent.SendData("reference point", content=self.agent.problem["ideal"])) # initially reference point is the ideal
                     if self.agent.received_solution:
                         self.agent.add_behaviour(self.agent.SendData(content_type="target"))
                         self.agent.received_solution = False
@@ -115,6 +131,11 @@ class ForestOwner(Agent):
                     if self.agent.can_send_target:
                         self.agent.add_behaviour(self.agent.SendData(content_type="target"))
                         self.agent.received_solution = False
+                elif "explanation" in contents:
+                    print("Forest owner received an explanation.")
+                    reference_point = self.get_updated_reference_point(contents["explanation"], self.agent.reference_point)
+                    self.agent.add_behaviour(self.agent.SendData("reference point", content=reference_point))
+
 
     class ReceiveRequests(CyclicBehaviour):
         async def run(self):
@@ -127,9 +148,10 @@ class ForestOwner(Agent):
                     self.agent.add_behaviour(self.agent.SendData(content_type="number of objectives"))
 
     class SendData(OneShotBehaviour):
-        def __init__(self, content_type: str):
+        def __init__(self, content_type: str, content = None):
             super().__init__()
             self.content_type = content_type
+            self.content = content
 
         async def run(self):
             if self.content_type == "target":
@@ -141,6 +163,7 @@ class ForestOwner(Agent):
                     body=json.dumps(contents),
                     metadata={"performative": "inform"}
                 )
+                await asyncio.sleep(2) #forest owner thinking
                 await self.send(msg)
                 print(f"Target sent: {target}.")
             elif self.content_type == "number of objectives":
@@ -164,14 +187,16 @@ class ForestOwner(Agent):
                 )
                 await self.send(msg)
                 print(f"The problem sent: {self.agent.problem}.")
-            elif self.content_type == "reference point":
+            elif self.content_type == "reference point" and self.content:
                 print("Forest owner sending a reference point...")
-                contents = {"reference_point": self.agent.problem["ideal"]}
+                self.agent.reference_point = self.content
+                contents = {"reference_point": self.content}
                 msg = Message(
                     to="solver@localhost",
                     body=json.dumps(contents),
                     metadata={"performative": "inform"}
                 )
+                await asyncio.sleep(5) #forest owner thinking
                 await self.send(msg)
                 print(f"A reference point sent: {self.agent.problem["ideal"]}.")
     
@@ -182,15 +207,30 @@ class ForestOwner(Agent):
         self.add_behaviour(receiveInformMessages, Template(metadata={"performative": "inform"}))
         receiveRequests = self.ReceiveRequests()
         self.add_behaviour(receiveRequests, Template(metadata={"performative": "request"}))
-        #self.add_behaviour(self.SendData("problem"))
-        #self.add_behaviour(self.SendData("reference point"))
-        #sendTarget = self.SendTarget()
-        #self.add_behaviour(sendTarget)
 
 class ExplanationGatherer(Agent):
     def __init__(self, jid, password, n_objectives, port = 5222, verify_security = False, **kwargs):
         super().__init__(jid, password, port, verify_security, **kwargs)
         self.n_objectives = n_objectives
+        self.target = 0
+
+    class SendExplanations(OneShotBehaviour):
+        def __init__(self, explanation):
+            super().__init__()
+            self.explanation = explanation
+
+        async def run(self):
+            print(f"Explanation gatherer sending the explanation {self.explanation} to forest owner...")
+            #asyncio.sleep(20)
+            msg = Message(
+                to = "forestowner@localhost",
+                body = json.dumps({"explanation": self.explanation}),
+                metadata={"performative": "inform"}
+            )
+            await self.send(msg)
+            print("Explanation gatherer sent the explanation to forest owner.")
+
+            #self.agent.add_behaviour(self.agent.SendRequests("target"))
 
     class SendRequests(OneShotBehaviour):
         def __init__(self, request_content: str):
@@ -215,6 +255,14 @@ class ExplanationGatherer(Agent):
                 )
                 await self.send(msg)
                 print("Explanaton gatherer requested a number of objectives.")
+            elif self.request_content == "explanation":
+                msg = Message(
+                    to = f"explanationagent{self.agent.target}@localhost",
+                    body = self.request_content,
+                    metadata={"performative": "request"}
+                )
+                await self.send(msg)
+                print("Explanaton gatherer requested an explanation from the target explainer.")
     
     class ReceiveInformMessages(CyclicBehaviour):
         async def run(self):
@@ -224,34 +272,29 @@ class ExplanationGatherer(Agent):
                 contents = json.loads(msg.body)
                 if "target" in contents:
                     print(f"Explanation gatherer received the target: {contents["target"]}")
-                    self.agent.add_behaviour(self.agent.EmployTarget(contents["target"]))
+                    self.agent.target = contents["target"]
+                    self.agent.add_behaviour(self.agent.SendRequests("explanation"))
                 elif "explanation" in contents:
                     print(f"Explanation gatherer received explanations: \n    {contents["explanation"]}")
+                    self.agent.add_behaviour(self.agent.SendExplanations(contents["explanation"]))
                 elif "n_objectives" in contents:
                     print(f"Explanation gatherer received the number of objectives : {contents["n_objectives"]}.")
+                    self.agent.n_objectives = contents["n_objectives"]
                     self.agent.add_behaviour(self.agent.CreateExplainers(n_objectives=contents["n_objectives"]))
                 elif "solution" in contents:
                     print(f"Explanation gatherer received a solution and reference point: {contents}")
+                    for i in range(self.agent.n_objectives):
+                        msg_to_send = Message(
+                            to=f"explanationagent{i}@localhost",
+                            body=msg.body,
+                            metadata={"performative": "inform"}
+                        )
+                        await self.send(msg_to_send)
+                    print("Explanation gatherer shared the solution and reference point with the explainers.")
+
             #else:
                 #print("Explanation gatherer has not received a target after 10 seconds.")
                 #self.kill()
-
-    class EmployTarget(OneShotBehaviour):
-        def __init__(self, target, **kwargs):
-            super().__init__(**kwargs)
-            self.target = target
-
-        async def run(self):
-            #await self.agent.createExplainers.join() # this has to wait until all explainers are created
-            print("Explanation gatherer employing the target...")
-            data = {"CO2 level": 10}
-            msg = Message(
-                to=f"explanationagent{self.target}@localhost",
-                body=json.dumps(data),
-                metadata={"performative": "inform"}
-            )
-            await self.send(msg)
-            print("Target employed.")
 
     class CreateExplainers(OneShotBehaviour):
         def __init__(self, n_objectives, **kwargs):
@@ -273,9 +316,6 @@ class ExplanationGatherer(Agent):
     async def setup(self):
         print("Explanation gatherer started.")
         self.add_behaviour(self.SendRequests(request_content="number of objectives"))
-        #self.createExplainers = self.CreateExplainers(n_objectives=self.n_objectives)
-        #self.add_behaviour(self.createExplainers)
-        #self.add_behaviour(self.SendRequests(request_content="target"))
         receiveInformMessages = self.ReceiveInformMessages()
         self.add_behaviour(receiveInformMessages, Template(metadata={"performative": "inform"}))
 
@@ -284,18 +324,21 @@ class ExplanationAgent(Agent):
     def __init__(self, jid, password, objective: int, n_objectives: int, port = 5222, verify_security = False, **kwargs):
         super().__init__(jid, password, port, verify_security, **kwargs)
         self.objective = objective
-        self.n_objectives = n_objectives
         self.rival = (objective + 1) % n_objectives
+        self.can_send_explanation = False
+        self.has_new_data = False
+        self.solution = None
+        self.reference_point = None
 
     class SendExplanations(OneShotBehaviour):
-        def __init__(self, data, **kwargs):
+        def __init__(self, **kwargs):
             super().__init__(**kwargs)
-            self.data = data
 
         async def run(self):
             print(f"{self.agent.jid.username} sending explanations...")
             contents = {
-                "explanation": f"These are the explanations based on this data: {self.data}.\n    To improve objective {self.agent.objective}, you need to impair objective {self.agent.rival} by {self.data["CO2 level"] + self.agent.objective}."
+                "explanation": f"""These are the explanations based on this data: {self.agent.solution, self.agent.reference_point}.
+                To improve objective {self.agent.objective}, you need to impair objective {self.agent.rival} by {self.agent.solution["1"] / 10}."""
             }
             msg = Message(
                 to="explanationgatherer@localhost",
@@ -306,27 +349,44 @@ class ExplanationAgent(Agent):
             await self.send(msg)
             print("Explanations sent.")
 
-            self.exit_code = "Explanations sent"
+            self.agent.has_new_data = False
+            self.agent.can_send_explanation = False
 
-    class ReceiveData(CyclicBehaviour):
-        def __init__(self):
-            super().__init__()
-
+    class ReceiveRequests(CyclicBehaviour):
         async def run(self):
-            print(f"{self.agent.jid.username} ready to receive data.")
+            #print(f"{self.agent.jid.username} ready to receive requests.")
             msg = await self.receive(timeout=10)
             if msg:
-                data = json.loads(msg.body)
-                print(f"{self.agent.jid.username} received data: {data}")
-                self.agent.add_behaviour(self.agent.SendExplanations(data))
+                if msg.body == "explanation":
+                    self.agent.can_send_explanation = True
+                    if self.agent.has_new_data:
+                        self.agent.add_behaviour(self.agent.SendExplanations())
+                        self.agent.can_send_explanation = False
+
+    class ReceiveInformMessages(CyclicBehaviour):
+        async def run(self):
+            #print(f"{self.agent.jid.username} ready to receive data.")
+            msg = await self.receive(timeout=10)
+            if msg:
+                contents = json.loads(msg.body)
+                if "solution" and "reference_point" in contents:
+                    print(f"{self.agent.jid.username} received data: {contents}")
+                    self.agent.solution = contents["solution"]
+                    self.agent.reference_point = contents["reference_point"]
+                    self.agent.has_new_data = True
+                    if self.agent.can_send_explanation:
+                        self.agent.add_behaviour(self.agent.SendExplanations())
+                        self.agent.has_new_data = False
             """else:
                 print(f"{self.agent.jid.username} has not received a message after 10 seconds.")
                 #self.kill()"""
 
     async def setup(self):
         print(f"{self.jid.username} started.")
-        receiveData = self.ReceiveData()
-        self.add_behaviour(receiveData, Template(metadata={"performative": "inform"}))
+        receiveInformMessages = self.ReceiveInformMessages()
+        self.add_behaviour(receiveInformMessages, Template(metadata={"performative": "inform"}))
+        receiveRequests = self.ReceiveRequests()
+        self.add_behaviour(receiveRequests, Template(metadata={"performative": "request"}))
 
 async def main(n_objectives: int):
     # initialize and start the solver
@@ -341,9 +401,6 @@ async def main(n_objectives: int):
     explanationGatherer = ExplanationGatherer("explanationgatherer@localhost", "preference", n_objectives=n_objectives)
     await explanationGatherer.start(auto_register=True)
     #explanationGatherer.web.start(hostname="127.0.0.1", port="10000")
-
-    # wait for the explainers to be created and started
-    #await explanationGatherer.createExplainers.join()
 
     try:
         while True:
