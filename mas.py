@@ -10,6 +10,8 @@ from spade.behaviour import CyclicBehaviour, OneShotBehaviour
 from spade.message import Message
 from spade.template import Template
 
+from desdeo.utopia_stuff.utopia_problem_old import utopia_problem_old
+
 
 problem = {
     "ideal": {"1": 2, "2": 3, "3": 4}
@@ -49,16 +51,6 @@ class Solver(Agent):
             )
             await self.send(msg)
             print(f"Solution and reference point sent to explanation gatherer: {contents}")
-            """recipients = ["forestowner@localhost", "explanationgatherer@localhost"]
-            for recipient in recipients:
-                contents = {"solution": self.agent.solution}
-                msg = Message(
-                    to=recipient,
-                    body=json.dumps(contents),
-                    metadata={"performative": "inform"}
-                )
-                await self.send(msg)
-                print(f"Solution sent: {self.agent.solution}")"""
 
     class Solve(OneShotBehaviour):
         async def run(self):
@@ -68,7 +60,7 @@ class Solver(Agent):
 
     class ReceiveInformMessages(CyclicBehaviour):
         async def run(self):
-            print("Solver waiting for messages.")
+            #print("Solver waiting for messages.")
             msg = await self.receive(timeout=10)
             if msg:
                 contents = json.loads(msg.body)
@@ -115,7 +107,7 @@ class ForestOwner(Agent):
                 return new_reference_point
 
         async def run(self):
-            print("Forest owner waiting for messages.")
+            #print("Forest owner waiting for messages.")
             msg = await self.receive(timeout=10)
             if msg:
                 contents = json.loads(msg.body)
@@ -139,7 +131,7 @@ class ForestOwner(Agent):
 
     class ReceiveRequests(CyclicBehaviour):
         async def run(self):
-            print("Forest owner waiting for requests.")
+            #print("Forest owner waiting for requests.")
             msg = await self.receive(timeout=10)
             if msg:
                 if msg.body == "target":
@@ -155,7 +147,6 @@ class ForestOwner(Agent):
 
         async def run(self):
             if self.content_type == "target":
-                print("Forest owner sending the target...")
                 target = random.randint(0, self.agent.n_objectives - 1)
                 contents = {"target": target}
                 msg = Message(
@@ -163,7 +154,9 @@ class ForestOwner(Agent):
                     body=json.dumps(contents),
                     metadata={"performative": "inform"}
                 )
-                await asyncio.sleep(2) #forest owner thinking
+                print("Forest owner thinking of an objective to improve...")
+                await asyncio.sleep(2)
+                print("Forest owner sending the target...")
                 await self.send(msg)
                 print(f"Target sent: {target}.")
             elif self.content_type == "number of objectives":
@@ -188,7 +181,6 @@ class ForestOwner(Agent):
                 await self.send(msg)
                 print(f"The problem sent: {self.agent.problem}.")
             elif self.content_type == "reference point" and self.content:
-                print("Forest owner sending a reference point...")
                 self.agent.reference_point = self.content
                 contents = {"reference_point": self.content}
                 msg = Message(
@@ -196,7 +188,9 @@ class ForestOwner(Agent):
                     body=json.dumps(contents),
                     metadata={"performative": "inform"}
                 )
+                print("Forest owner choosing a reference point...")
                 await asyncio.sleep(5) #forest owner thinking
+                print("Forest owner sending a reference point...")
                 await self.send(msg)
                 print(f"A reference point sent: {self.agent.problem["ideal"]}.")
     
@@ -221,7 +215,6 @@ class ExplanationGatherer(Agent):
 
         async def run(self):
             print(f"Explanation gatherer sending the explanation {self.explanation} to forest owner...")
-            #asyncio.sleep(20)
             msg = Message(
                 to = "forestowner@localhost",
                 body = json.dumps({"explanation": self.explanation}),
@@ -266,7 +259,7 @@ class ExplanationGatherer(Agent):
     
     class ReceiveInformMessages(CyclicBehaviour):
         async def run(self):
-            print("Explanation gatherer ready to receive data.")
+            #print("Explanation gatherer ready to receive data.")
             msg = await self.receive(timeout=10)
             if msg:
                 contents = json.loads(msg.body)
