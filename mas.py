@@ -13,6 +13,10 @@ from spade.template import Template
 from desdeo.utopia_stuff.utopia_problem_old import utopia_problem_old
 
 
+PROBLEM_ENUM = {
+    "utopia_problem_old": utopia_problem_old()[0]
+}
+
 problem = {
     "ideal": {"1": 2, "2": 3, "3": 4}
 }
@@ -65,8 +69,9 @@ class Solver(Agent):
             if msg:
                 contents = json.loads(msg.body)
                 if "problem" in contents:
+                    problem = PROBLEM_ENUM[contents["problem"]]
                     print(f"Solver received the problem: {contents["problem"]}.")
-                    self.agent.problem = contents["problem"]
+                    self.agent.problem = problem
                     if self.agent.reference_point: # assuming we are solving the same problem for which the reference point is given
                         self.agent.add_behaviour(self.agent.Solve())
                     # TODO: maybe request for a reference point as well once the problem is received?
@@ -86,7 +91,7 @@ class Solver(Agent):
 class ForestOwner(Agent):
     def __init__(self, jid, password, problem, port = 5222, verify_security = False):
         super().__init__(jid, password, port, verify_security)
-        self.n_objectives = 3
+        self.n_objectives = len(problem.objectives)
         self.can_send_target = False
         self.received_solution = False
         self.problem = problem
@@ -113,8 +118,8 @@ class ForestOwner(Agent):
                 contents = json.loads(msg.body)
                 if "ready for target" in contents:
                     self.agent.can_send_target = True
-                    self.agent.add_behaviour(self.agent.SendData("problem"))
-                    self.agent.add_behaviour(self.agent.SendData("reference point", content=self.agent.problem["ideal"])) # initially reference point is the ideal
+                    #self.agent.add_behaviour(self.agent.SendData("problem"))
+                    self.agent.add_behaviour(self.agent.SendData("reference point", content=self.agent.problem.get_ideal_point())) # initially reference point is the ideal
                     if self.agent.received_solution:
                         self.agent.add_behaviour(self.agent.SendData(content_type="target"))
                         self.agent.received_solution = False
@@ -136,8 +141,24 @@ class ForestOwner(Agent):
             if msg:
                 if msg.body == "target":
                     self.agent.add_behaviour(self.agent.SendData(content_type="target"))
+                if msg.body == "problem":
+                    self.agent.add_behaviour(self.agent.SendProblem())
                 elif msg.body == "number of objectives":
                     self.agent.add_behaviour(self.agent.SendData(content_type="number of objectives"))
+
+    class SendProblem(OneShotBehaviour):
+        async def run(self):
+            print("Forest owner sending the problem...")
+            recipients = ["solver@localhost", "explanationgatherer@localhost"]
+            for recipient in recipients:
+                contents = {"problem": "utopia_problem_old"}
+                msg = Message(
+                    to=recipient,
+                    body=json.dumps(contents),
+                    metadata={"performative": "inform"}
+                )
+                await self.send(msg)
+                print(f"The problem sent: {self.agent.problem.name}.")
 
     class SendData(OneShotBehaviour):
         def __init__(self, content_type: str, content = None):
@@ -170,16 +191,6 @@ class ForestOwner(Agent):
                 )
                 await self.send(msg)
                 print(f"Number of objectives sent: {n_objectives}.")
-            elif self.content_type == "problem":
-                print("Forest owner sending the problem...")
-                contents = {"problem": self.agent.problem}
-                msg = Message(
-                    to="solver@localhost",
-                    body=json.dumps(contents),
-                    metadata={"performative": "inform"}
-                )
-                await self.send(msg)
-                print(f"The problem sent: {self.agent.problem}.")
             elif self.content_type == "reference point" and self.content:
                 self.agent.reference_point = self.content
                 contents = {"reference_point": self.content}
@@ -192,11 +203,10 @@ class ForestOwner(Agent):
                 await asyncio.sleep(5) #forest owner thinking
                 print("Forest owner sending a reference point...")
                 await self.send(msg)
-                print(f"A reference point sent: {self.agent.problem["ideal"]}.")
+                print(f"A reference point sent: {self.content}.")
     
     async def setup(self):
         print("Forest owner started.")
-        self.n_objectives = random.randint(2, 5)
         receiveInformMessages = self.ReceiveInformMessages()
         self.add_behaviour(receiveInformMessages, Template(metadata={"performative": "inform"}))
         receiveRequests = self.ReceiveRequests()
@@ -206,6 +216,7 @@ class ExplanationGatherer(Agent):
     def __init__(self, jid, password, n_objectives, port = 5222, verify_security = False, **kwargs):
         super().__init__(jid, password, port, verify_security, **kwargs)
         self.n_objectives = n_objectives
+        self.problem = None
         self.target = 0
 
     class SendExplanations(OneShotBehaviour):
@@ -240,6 +251,14 @@ class ExplanationGatherer(Agent):
                 )
                 await self.send(msg)
                 print("Explanaton gatherer requested a target.")
+            elif self.request_content == "problem":
+                msg = Message(
+                    to = "forestowner@localhost",
+                    body = self.request_content,
+                    metadata={"performative": "request"}
+                )
+                await self.send(msg)
+                print("Explanaton gatherer requested the problem.")
             elif self.request_content == "number of objectives":
                 msg = Message(
                     to = "forestowner@localhost",
@@ -263,7 +282,13 @@ class ExplanationGatherer(Agent):
             msg = await self.receive(timeout=10)
             if msg:
                 contents = json.loads(msg.body)
-                if "target" in contents:
+                if "problem" in contents:
+                    problem = PROBLEM_ENUM[contents["problem"]]
+                    print(f"Explanation gatherer received the problem: {problem.name}")
+                    self.agent.problem = problem
+                    self.agent.n_objectives = len(problem.objectives)
+                    self.agent.add_behaviour(self.agent.CreateExplainers(n_objectives=self.agent.n_objectives))
+                elif "target" in contents:
                     print(f"Explanation gatherer received the target: {contents["target"]}")
                     self.agent.target = contents["target"]
                     self.agent.add_behaviour(self.agent.SendRequests("explanation"))
@@ -308,7 +333,7 @@ class ExplanationGatherer(Agent):
 
     async def setup(self):
         print("Explanation gatherer started.")
-        self.add_behaviour(self.SendRequests(request_content="number of objectives"))
+        self.add_behaviour(self.SendRequests(request_content="problem"))
         receiveInformMessages = self.ReceiveInformMessages()
         self.add_behaviour(receiveInformMessages, Template(metadata={"performative": "inform"}))
 
@@ -387,7 +412,7 @@ async def main(n_objectives: int):
     await solverAgent.start(auto_register=True)
 
     # initialize and start a forest owner
-    forestOwner = ForestOwner("forestowner@localhost", "forestowner", problem=problem)
+    forestOwner = ForestOwner("forestowner@localhost", "forestowner", problem=PROBLEM_ENUM["utopia_problem_old"])
     await forestOwner.start(auto_register=True)
 
     # initialize and start an explanation gatherer
