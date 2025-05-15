@@ -3,6 +3,10 @@ import json
 import random
 import re
 import spade
+import string
+
+import numpy as np
+import polars as pl
 
 from spade import wait_until_finished
 from spade.agent import Agent
@@ -10,19 +14,16 @@ from spade.behaviour import CyclicBehaviour, OneShotBehaviour
 from spade.message import Message
 from spade.template import Template
 
+from desdeo.explanations import ShapExplainer, generate_biased_mean_data
+from desdeo.mcdm import rpm_solve_solutions
 from desdeo.utopia_stuff.utopia_problem_old import utopia_problem_old
 
+
+MODEL = None
 
 PROBLEM_ENUM = {
     "utopia_problem_old": utopia_problem_old()[0]
 }
-
-problem = {
-    "ideal": {"1": 2, "2": 3, "3": 4}
-}
-
-def solver(problem, reference_point):
-    return {"1": 1, "2": 2, "3": 3}
 
 class Solver(Agent):
     def __init__(self, jid, password, solver, port = 5222, verify_security = False):
@@ -59,7 +60,7 @@ class Solver(Agent):
     class Solve(OneShotBehaviour):
         async def run(self):
             print("Solver solving the problem...")
-            self.agent.solution = self.agent.solver(self.agent.problem, self.agent.reference_point)
+            self.agent.solution = self.agent.solver(self.agent.problem, self.agent.reference_point)[0].optimal_objectives # rpm returns a list of two things
             self.agent.add_behaviour(self.agent.SendSolution())
 
     class ReceiveInformMessages(CyclicBehaviour):
@@ -95,6 +96,7 @@ class ForestOwner(Agent):
         self.can_send_target = False
         self.received_solution = False
         self.problem = problem
+        self.objective_symbols = [obj.symbol for obj in problem.objectives]
         self.reference_point = None
 
     class ReceiveInformMessages(CyclicBehaviour):
@@ -102,12 +104,12 @@ class ForestOwner(Agent):
             previous = previous_reference_point
             if previous:
                 explanation_split = re.split(r"[ ,]+", explanation)
-                objective_to_improve = int(explanation_split[explanation_split.index("improve") + 2])
-                objective_to_impair = int(explanation_split[explanation_split.index("impair") + 2])
+                objective_to_improve = explanation_split[explanation_split.index("improve") + 2]
+                objective_to_impair = explanation_split[explanation_split.index("impair") + 2]
                 amount_to_impair = float(re.sub(r"\D+$", "", explanation_split[explanation_split.index("by") + 1]))
                 print(objective_to_improve, objective_to_impair, amount_to_impair)
                 new_reference_point = previous
-                new_reference_point["1"] = new_reference_point["1"] + amount_to_impair
+                new_reference_point[objective_to_impair] = new_reference_point[objective_to_impair] + amount_to_impair
                 print(new_reference_point)
                 return new_reference_point
 
@@ -158,7 +160,7 @@ class ForestOwner(Agent):
                     metadata={"performative": "inform"}
                 )
                 await self.send(msg)
-                print(f"The problem sent: {self.agent.problem.name}.")
+            print(f"The problem sent: {self.agent.problem.name}.")
 
     class SendData(OneShotBehaviour):
         def __init__(self, content_type: str, content = None):
@@ -168,7 +170,7 @@ class ForestOwner(Agent):
 
         async def run(self):
             if self.content_type == "target":
-                target = random.randint(0, self.agent.n_objectives - 1)
+                target = random.choice(self.agent.objective_symbols)
                 contents = {"target": target}
                 msg = Message(
                     to="explanationgatherer@localhost",
@@ -217,6 +219,7 @@ class ExplanationGatherer(Agent):
         super().__init__(jid, password, port, verify_security, **kwargs)
         self.n_objectives = n_objectives
         self.problem = None
+        self.objective_symbols = []
         self.target = 0
 
     class SendExplanations(OneShotBehaviour):
@@ -287,10 +290,11 @@ class ExplanationGatherer(Agent):
                     print(f"Explanation gatherer received the problem: {problem.name}")
                     self.agent.problem = problem
                     self.agent.n_objectives = len(problem.objectives)
-                    self.agent.add_behaviour(self.agent.CreateExplainers(n_objectives=self.agent.n_objectives))
+                    self.agent.objective_symbols = [obj.symbol for obj in problem.objectives]
+                    self.agent.add_behaviour(self.agent.CreateExplainers(objective_symbols=self.agent.objective_symbols))
                 elif "target" in contents:
                     print(f"Explanation gatherer received the target: {contents["target"]}")
-                    self.agent.target = contents["target"]
+                    self.agent.target = contents["target"].translate(str.maketrans('', '', string.punctuation))
                     self.agent.add_behaviour(self.agent.SendRequests("explanation"))
                 elif "explanation" in contents:
                     print(f"Explanation gatherer received explanations: \n    {contents["explanation"]}")
@@ -301,9 +305,11 @@ class ExplanationGatherer(Agent):
                     self.agent.add_behaviour(self.agent.CreateExplainers(n_objectives=contents["n_objectives"]))
                 elif "solution" in contents:
                     print(f"Explanation gatherer received a solution and reference point: {contents}")
-                    for i in range(self.agent.n_objectives):
+                    for i in range(len(self.agent.objective_symbols)):
+                        objective = self.agent.objective_symbols[i]
+                        clean_symbol = objective.translate(str.maketrans('', '', string.punctuation))
                         msg_to_send = Message(
-                            to=f"explanationagent{i}@localhost",
+                            to=f"explanationagent{clean_symbol}@localhost",
                             body=msg.body,
                             metadata={"performative": "inform"}
                         )
@@ -315,14 +321,17 @@ class ExplanationGatherer(Agent):
                 #self.kill()
 
     class CreateExplainers(OneShotBehaviour):
-        def __init__(self, n_objectives, **kwargs):
+        def __init__(self, objective_symbols, **kwargs):
             super().__init__(**kwargs)
-            self.n_objectives = n_objectives
+            self.objective_symbols = objective_symbols
+            self.n_objectives = len(objective_symbols)
 
         async def run(self):
             print(f"Explanation gatherer creating {self.n_objectives} explainers...")
             for i in range(self.n_objectives):
-                explanationAgent = ExplanationAgent(f"explanationagent{i}@localhost", "explainer", objective=i, n_objectives=self.n_objectives)
+                objective = self.objective_symbols[i]
+                clean_symbol = objective.translate(str.maketrans('', '', string.punctuation))
+                explanationAgent = ExplanationAgent(f"explanationagent{clean_symbol}@localhost", "explainer", objective=objective, objective_symbols=self.agent.objective_symbols)
                 await explanationAgent.start(auto_register=True)
             msg = Message(
                 to="forestowner@localhost",
@@ -339,10 +348,11 @@ class ExplanationGatherer(Agent):
 
 
 class ExplanationAgent(Agent):
-    def __init__(self, jid, password, objective: int, n_objectives: int, port = 5222, verify_security = False, **kwargs):
+    def __init__(self, jid, password, objective: str, objective_symbols: list[str], port = 5222, verify_security = False, **kwargs):
         super().__init__(jid, password, port, verify_security, **kwargs)
         self.objective = objective
-        self.rival = (objective + 1) % n_objectives
+        self.objective_symbols = objective_symbols
+        self.rival = objective
         self.can_send_explanation = False
         self.has_new_data = False
         self.solution = None
@@ -352,11 +362,43 @@ class ExplanationAgent(Agent):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
 
+        def generate_explanations(self, reference_point: dict):
+            target = [value for _, value in reference_point.items()]
+            background_subset = generate_biased_mean_data(df[["f_1", "f_2", "f_3"]].to_numpy(), target, solver="GUROBI")
+            MODEL.setup(background_data=pl.DataFrame(df[background_subset]))
+            shaps = MODEL.explain_input(pl.DataFrame({"z_1": target[0], "z_2": target[1], "z_3": target[2]})).values[0].T
+            shaps_dict = {
+                "f_1": shaps[0],
+                "f_2": shaps[1],
+                "f_3": shaps[2]
+            }
+            shaps_for_this_agent = shaps_dict[self.agent.objective]
+            shaps_for_this_agent_dict = {
+                "f_1": shaps_for_this_agent[0],
+                "f_2": shaps_for_this_agent[1],
+                "f_3": shaps_for_this_agent[2]
+            }
+            to_improve = self.agent.objective
+            to_impair = self.agent.rival
+            max_effect = shaps_for_this_agent_dict[self.agent.rival]
+            min_effect = shaps_for_this_agent_dict[self.agent.objective]
+            for key, value in shaps_for_this_agent_dict.items():
+                if value > max_effect:
+                    max_effect = value
+                    to_improve = key
+                if value < min_effect:
+                    min_effect = value
+                    to_impair = key
+                    self.agent.rival = key
+            print(shaps_for_this_agent_dict, to_improve, to_impair)
+            return 
+
         async def run(self):
+            self.generate_explanations(self.agent.reference_point)
             print(f"{self.agent.jid.username} sending explanations...")
             contents = {
                 "explanation": f"""These are the explanations based on this data: {self.agent.solution, self.agent.reference_point}.
-                To improve objective {self.agent.objective}, you need to impair objective {self.agent.rival} by {self.agent.solution["1"] / 10}."""
+                To improve objective {self.agent.objective}, you need to impair objective {self.agent.rival} by {self.agent.solution[self.agent.rival] / 10}."""
             }
             msg = Message(
                 to="explanationgatherer@localhost",
@@ -408,7 +450,7 @@ class ExplanationAgent(Agent):
 
 async def main(n_objectives: int):
     # initialize and start the solver
-    solverAgent = Solver("solver@localhost", "solver", solver=solver)
+    solverAgent = Solver("solver@localhost", "solver", solver=rpm_solve_solutions)
     await solverAgent.start(auto_register=True)
 
     # initialize and start a forest owner
@@ -431,4 +473,40 @@ async def main(n_objectives: int):
 if __name__ == "__main__":
     # run the multi-agent system with three objectives (i.e., three explainers)
     # NOTE: the number of objectives should come from the problem
+
+    # this seems like something the explanation gatherer should do as soon as it gets the problem
+    problem = PROBLEM_ENUM["utopia_problem_old"]
+    ideal = problem.get_ideal_point()
+    nadir = problem.get_nadir_point()
+    n_samples = 50
+
+    bounds = {
+        "f_1": (nadir["f_1"], ideal["f_1"]),
+        "f_2": (nadir["f_2"], ideal["f_2"]),
+        "f_3": (nadir["f_3"], ideal["f_3"])
+    }
+
+    inputs = {
+        key: np.random.uniform(low, high, size=n_samples)
+        for key, (low, high) in bounds.items()
+    }
+
+    input_dicts = [
+        {key: inputs[key][i] for key in bounds}
+        for i in range(n_samples)
+    ]
+
+    outputs = []
+
+    z_dicts = []
+    for input in input_dicts:
+        d = rpm_solve_solutions(problem, input)[0].optimal_objectives
+        for key, value in input.items():
+            d[key.replace("f", "z")] = value
+        outputs.append(d)
+
+    df = pl.DataFrame(outputs)
+
+    MODEL = ShapExplainer(problem_data=df, input_symbols=["z_1", "z_2", "z_3"], output_symbols=["f_1", "f_2", "f_3"])
+
     spade.run(main(n_objectives=3))
