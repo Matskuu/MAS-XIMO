@@ -19,7 +19,7 @@ from desdeo.mcdm import rpm_solve_solutions
 from desdeo.utopia_stuff.utopia_problem_old import utopia_problem_old
 
 
-MODEL = None
+shap_model = None
 
 PROBLEM_ENUM = {
     "utopia_problem_old": utopia_problem_old()[0]
@@ -98,19 +98,24 @@ class ForestOwner(Agent):
         self.problem = problem
         self.objective_symbols = [obj.symbol for obj in problem.objectives]
         self.reference_point = None
+        self.solution = None
 
     class ReceiveInformMessages(CyclicBehaviour):
         def get_updated_reference_point(self, explanation: str, previous_reference_point):
             previous = previous_reference_point
-            if previous:
+            if previous and self.agent.solution:
                 explanation_split = re.split(r"[ ,]+", explanation)
                 objective_to_improve = explanation_split[explanation_split.index("improve") + 2]
                 objective_to_impair = explanation_split[explanation_split.index("impair") + 2]
-                amount_to_impair = float(re.sub(r"\D+$", "", explanation_split[explanation_split.index("by") + 1]))
-                print(objective_to_improve, objective_to_impair, amount_to_impair)
-                new_reference_point = previous
-                new_reference_point[objective_to_impair] = new_reference_point[objective_to_impair] + amount_to_impair
-                print(new_reference_point)
+                #amount_to_impair = float(re.sub(r"\D+$", "", explanation_split[explanation_split.index("by") + 1]))
+                #print(objective_to_improve, objective_to_impair, amount_to_impair)
+                # because the problem is maximization, when this is not known it should be checked
+                amount_to_improve = (self.agent.problem.get_ideal_point()[objective_to_improve] - self.agent.solution[objective_to_improve]) / 2
+                amount_to_impair = (self.agent.solution[objective_to_impair] - self.agent.problem.get_nadir_point()[objective_to_impair]) / 2
+                new_reference_point = self.agent.solution
+                new_reference_point[objective_to_improve] = new_reference_point[objective_to_improve] + amount_to_improve
+                new_reference_point[objective_to_impair] = new_reference_point[objective_to_impair] - amount_to_impair
+                print(f"New reference point: {new_reference_point}")
                 return new_reference_point
 
         async def run(self):
@@ -121,12 +126,14 @@ class ForestOwner(Agent):
                 if "ready for target" in contents:
                     self.agent.can_send_target = True
                     #self.agent.add_behaviour(self.agent.SendData("problem"))
-                    self.agent.add_behaviour(self.agent.SendData("reference point", content=self.agent.problem.get_ideal_point())) # initially reference point is the ideal
+                    # initially reference point is not the ideal so that the reference point components stay in between ideal and nadir
+                    self.agent.add_behaviour(self.agent.SendData("reference point", content={"f_1": 86000, "f_2": 1700, "f_3": 20000}))
                     if self.agent.received_solution:
                         self.agent.add_behaviour(self.agent.SendData(content_type="target"))
                         self.agent.received_solution = False
                 elif "solution" in contents:
                     self.agent.received_solution = True
+                    self.agent.solution = contents["solution"]
                     if self.agent.can_send_target:
                         self.agent.add_behaviour(self.agent.SendData(content_type="target"))
                         self.agent.received_solution = False
@@ -170,7 +177,11 @@ class ForestOwner(Agent):
 
         async def run(self):
             if self.content_type == "target":
-                target = random.choice(self.agent.objective_symbols)
+                while True:
+                    target = random.choice(self.agent.objective_symbols)
+                    if not np.isclose(self.agent.solution[target], self.agent.problem.get_ideal_point()[target], rtol=1e-1):
+                        break
+                
                 contents = {"target": target}
                 msg = Message(
                     to="explanationgatherer@localhost",
@@ -228,7 +239,7 @@ class ExplanationGatherer(Agent):
             self.explanation = explanation
 
         async def run(self):
-            print(f"Explanation gatherer sending the explanation {self.explanation} to forest owner...")
+            #print(f"Explanation gatherer sending the explanation {self.explanation} to forest owner...")
             msg = Message(
                 to = "forestowner@localhost",
                 body = json.dumps({"explanation": self.explanation}),
@@ -324,14 +335,13 @@ class ExplanationGatherer(Agent):
         def __init__(self, objective_symbols, **kwargs):
             super().__init__(**kwargs)
             self.objective_symbols = objective_symbols
-            self.n_objectives = len(objective_symbols)
 
         async def run(self):
-            print(f"Explanation gatherer creating {self.n_objectives} explainers...")
-            for i in range(self.n_objectives):
+            print(f"Explanation gatherer creating {self.agent.n_objectives} explainers...")
+            for i in range(self.agent.n_objectives):
                 objective = self.objective_symbols[i]
                 clean_symbol = objective.translate(str.maketrans('', '', string.punctuation))
-                explanationAgent = ExplanationAgent(f"explanationagent{clean_symbol}@localhost", "explainer", objective=objective, objective_symbols=self.agent.objective_symbols)
+                explanationAgent = ExplanationAgent(f"explanationagent{clean_symbol}@localhost", "explainer", objective=objective)
                 await explanationAgent.start(auto_register=True)
             msg = Message(
                 to="forestowner@localhost",
@@ -348,11 +358,9 @@ class ExplanationGatherer(Agent):
 
 
 class ExplanationAgent(Agent):
-    def __init__(self, jid, password, objective: str, objective_symbols: list[str], port = 5222, verify_security = False, **kwargs):
+    def __init__(self, jid, password, objective: str, port = 5222, verify_security = False, **kwargs):
         super().__init__(jid, password, port, verify_security, **kwargs)
         self.objective = objective
-        self.objective_symbols = objective_symbols
-        self.rival = objective
         self.can_send_explanation = False
         self.has_new_data = False
         self.solution = None
@@ -365,8 +373,8 @@ class ExplanationAgent(Agent):
         def generate_explanations(self, reference_point: dict):
             target = [value for _, value in reference_point.items()]
             background_subset = generate_biased_mean_data(df[["f_1", "f_2", "f_3"]].to_numpy(), target, solver="GUROBI")
-            MODEL.setup(background_data=pl.DataFrame(df[background_subset]))
-            shaps = MODEL.explain_input(pl.DataFrame({"z_1": target[0], "z_2": target[1], "z_3": target[2]})).values[0].T
+            shap_model.setup(background_data=pl.DataFrame(df[background_subset]))
+            shaps = shap_model.explain_input(pl.DataFrame({"z_1": target[0], "z_2": target[1], "z_3": target[2]})).values[0].T
             shaps_dict = {
                 "f_1": shaps[0],
                 "f_2": shaps[1],
@@ -378,27 +386,32 @@ class ExplanationAgent(Agent):
                 "f_2": shaps_for_this_agent[1],
                 "f_3": shaps_for_this_agent[2]
             }
-            to_improve = self.agent.objective
-            to_impair = self.agent.rival
-            max_effect = shaps_for_this_agent_dict[self.agent.rival]
-            min_effect = shaps_for_this_agent_dict[self.agent.objective]
+            # initialize these with no default value
+            to_improve = None
+            to_impair = None
+            max_effect = -float("inf")
+            min_effect = float("inf")
             for key, value in shaps_for_this_agent_dict.items():
-                if value > max_effect:
+                if value > max_effect and key != self.agent.objective:
+                #if value > max_effect:
                     max_effect = value
-                    to_improve = key
+                    #to_improve = key
+                    to_impair = key
+                #if value < min_effect and key != self.agent.objective:
                 if value < min_effect:
                     min_effect = value
-                    to_impair = key
-                    self.agent.rival = key
-            print(shaps_for_this_agent_dict, to_improve, to_impair)
-            return 
+                    #to_impair = key
+                    to_improve = key
+            print(self.agent.objective, shaps_for_this_agent_dict, to_improve, to_impair)
+            explanation = f"To get better value for objective {self.agent.objective}, try to improve objective {to_improve} and impair objective {to_impair} in the reference point."
+            return explanation
 
         async def run(self):
-            self.generate_explanations(self.agent.reference_point)
+            explanation = self.generate_explanations(self.agent.reference_point)
             print(f"{self.agent.jid.username} sending explanations...")
             contents = {
                 "explanation": f"""These are the explanations based on this data: {self.agent.solution, self.agent.reference_point}.
-                To improve objective {self.agent.objective}, you need to impair objective {self.agent.rival} by {self.agent.solution[self.agent.rival] / 10}."""
+                {explanation}"""
             }
             msg = Message(
                 to="explanationgatherer@localhost",
@@ -478,7 +491,7 @@ if __name__ == "__main__":
     problem = PROBLEM_ENUM["utopia_problem_old"]
     ideal = problem.get_ideal_point()
     nadir = problem.get_nadir_point()
-    n_samples = 50
+    n_samples = 20
 
     bounds = {
         "f_1": (nadir["f_1"], ideal["f_1"]),
@@ -507,6 +520,6 @@ if __name__ == "__main__":
 
     df = pl.DataFrame(outputs)
 
-    MODEL = ShapExplainer(problem_data=df, input_symbols=["z_1", "z_2", "z_3"], output_symbols=["f_1", "f_2", "f_3"])
+    shap_model = ShapExplainer(problem_data=df, input_symbols=["z_1", "z_2", "z_3"], output_symbols=["f_1", "f_2", "f_3"])
 
     spade.run(main(n_objectives=3))
