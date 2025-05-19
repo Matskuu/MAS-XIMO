@@ -94,7 +94,6 @@ class Solver(Agent):
 class ForestOwner(Agent):
     def __init__(self, jid, password, problem, max_iterations, port = 5222, verify_security = False):
         super().__init__(jid, password, port, verify_security)
-        self.n_objectives = len(problem.objectives)
         self.can_send_target = False
         self.received_solution = False
         self.problem = problem
@@ -120,7 +119,7 @@ class ForestOwner(Agent):
                     amount_to_impair = (self.agent.solution[objective_to_impair] - self.agent.problem.get_nadir_point()[objective_to_impair]) / 2
                     new_reference_point[objective_to_impair] = new_reference_point[objective_to_impair] - amount_to_impair
                 new_reference_point[objective_to_improve] = new_reference_point[objective_to_improve] + amount_to_improve
-                print(f"New reference point: {new_reference_point}")
+                #print(f"New reference point: {new_reference_point}")
                 return new_reference_point
 
         async def run(self):
@@ -144,6 +143,7 @@ class ForestOwner(Agent):
                     self.agent.solution = contents["solution"]
                     if self.agent.iteration >= self.agent.max_iterations:
                         print("Forest owner has reached its preset max number of iterations. Ending the solution process.")
+                        print(f"{self.agent.solution} was chosen as the final solution.")
                         return
                     if self.agent.can_send_target:
                         self.agent.add_behaviour(self.agent.SendData(content_type="target"))
@@ -162,23 +162,7 @@ class ForestOwner(Agent):
                 if msg.body == "target":
                     self.agent.add_behaviour(self.agent.SendData(content_type="target"))
                 if msg.body == "problem":
-                    self.agent.add_behaviour(self.agent.SendProblem())
-                elif msg.body == "number of objectives":
-                    self.agent.add_behaviour(self.agent.SendData(content_type="number of objectives"))
-
-    class SendProblem(OneShotBehaviour):
-        async def run(self):
-            print("Forest owner sending the problem...")
-            recipients = ["solver@localhost", "explanationgatherer@localhost"]
-            for recipient in recipients:
-                contents = {"problem": "utopia_problem_old"}
-                msg = Message(
-                    to=recipient,
-                    body=json.dumps(contents),
-                    metadata={"performative": "inform"}
-                )
-                await self.send(msg)
-            print(f"The problem sent: {self.agent.problem.name}.")
+                    self.agent.add_behaviour(self.agent.SendData(content_type="problem"))
 
     class SendData(OneShotBehaviour):
         def __init__(self, content_type: str, content = None):
@@ -204,17 +188,18 @@ class ForestOwner(Agent):
                 print("Forest owner sending the target...")
                 await self.send(msg)
                 print(f"Target sent: {target}.")
-            elif self.content_type == "number of objectives":
-                print("Forest owner sending the number of objectives...")
-                n_objectives = self.agent.n_objectives
-                contents = {"n_objectives": n_objectives}
-                msg = Message(
-                    to="explanationgatherer@localhost",
-                    body=json.dumps(contents),
-                    metadata={"performative": "inform"}
-                )
-                await self.send(msg)
-                print(f"Number of objectives sent: {n_objectives}.")
+            elif self.content_type == "problem":
+                print("Forest owner sending the problem...")
+                recipients = ["solver@localhost", "explanationgatherer@localhost"]
+                for recipient in recipients:
+                    contents = {"problem": "utopia_problem_old"}
+                    msg = Message(
+                        to=recipient,
+                        body=json.dumps(contents),
+                        metadata={"performative": "inform"}
+                    )
+                    await self.send(msg)
+                print(f"The problem sent: {self.agent.problem.name}.")
             elif self.content_type == "reference point" and self.content:
                 if self.agent.iteration == 0:
                     print("Problem has been set up. Press C to start the solution process.")
@@ -268,8 +253,6 @@ class ExplanationGatherer(Agent):
             await self.send(msg)
             print("Explanation gatherer sent the explanation to forest owner.")
 
-            #self.agent.add_behaviour(self.agent.SendRequests("target"))
-
     class SendRequests(OneShotBehaviour):
         def __init__(self, request_content: str):
             super().__init__()
@@ -277,15 +260,7 @@ class ExplanationGatherer(Agent):
 
         async def run(self):
             print(f"Explanation gatherer sending a request for {self.request_content}...")
-            if self.request_content == "target":
-                msg = Message(
-                    to = "forestowner@localhost",
-                    body = self.request_content,
-                    metadata={"performative": "request"}
-                )
-                await self.send(msg)
-                print("Explanaton gatherer requested a target.")
-            elif self.request_content == "problem":
+            if self.request_content == "problem":
                 msg = Message(
                     to = "forestowner@localhost",
                     body = self.request_content,
@@ -293,14 +268,6 @@ class ExplanationGatherer(Agent):
                 )
                 await self.send(msg)
                 print("Explanaton gatherer requested the problem.")
-            elif self.request_content == "number of objectives":
-                msg = Message(
-                    to = "forestowner@localhost",
-                    body = self.request_content,
-                    metadata={"performative": "request"}
-                )
-                await self.send(msg)
-                print("Explanaton gatherer requested a number of objectives.")
             elif self.request_content == "explanation":
                 msg = Message(
                     to = f"explainer{self.agent.target}@localhost",
@@ -330,10 +297,6 @@ class ExplanationGatherer(Agent):
                 elif "explanation" in contents:
                     print(f"Explanation gatherer received explanations: \n    {contents["explanation"]}")
                     self.agent.add_behaviour(self.agent.SendExplanations(contents["explanation"]))
-                elif "n_objectives" in contents:
-                    print(f"Explanation gatherer received the number of objectives : {contents["n_objectives"]}.")
-                    self.agent.n_objectives = contents["n_objectives"]
-                    self.agent.add_behaviour(self.agent.CreateExplainers(n_objectives=contents["n_objectives"]))
                 elif "solution" in contents:
                     print(f"Explanation gatherer received a solution and reference point: {contents}")
                     for i in range(len(self.agent.objective_symbols)):
@@ -346,10 +309,6 @@ class ExplanationGatherer(Agent):
                         )
                         await self.send(msg_to_send)
                     print("Explanation gatherer shared the solution and reference point with the explainers.")
-
-            #else:
-                #print("Explanation gatherer has not received a target after 10 seconds.")
-                #self.kill()
 
     class CreateExplainers(OneShotBehaviour):
         def __init__(self, objective_symbols, **kwargs):
@@ -429,7 +388,7 @@ class Explainer(Agent):
                 to_improve = self.agent.objective
             if max_effect < 0:
                 to_impair = None
-            print(self.agent.objective, shaps_for_this_agent_dict, to_improve, to_impair)
+            #print(self.agent.objective, shaps_for_this_agent_dict, to_improve, to_impair)
             explanation = f"To get better value for objective {self.agent.objective}, try to improve objective {to_improve} and impair objective {to_impair} in the reference point."
             return explanation
 
@@ -437,8 +396,7 @@ class Explainer(Agent):
             explanation = self.generate_explanations(self.agent.reference_point)
             print(f"{self.agent.jid.username} sending explanations...")
             contents = {
-                "explanation": f"""These are the explanations based on this data: {self.agent.solution, self.agent.reference_point}.
-                {explanation}"""
+                "explanation": explanation
             }
             msg = Message(
                 to="explanationgatherer@localhost",
@@ -547,7 +505,7 @@ if __name__ == "__main__":
     # run the multi-agent system with three objectives (i.e., three explainers)
 
     # this seems like something the explanation gatherer should do as soon as it gets the problem
-    #sample_input_space_to_file(n_samples=200)
+    #sample_input_space_to_file(n_samples=20)
     
     outputs = []
 
