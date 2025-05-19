@@ -1,5 +1,6 @@
 import asyncio
 import json
+import keyboard
 import random
 import re
 import spade
@@ -90,7 +91,7 @@ class Solver(Agent):
         self.add_behaviour(receiveInformMessages, Template(metadata={"performative": "inform"}))
 
 class ForestOwner(Agent):
-    def __init__(self, jid, password, problem, port = 5222, verify_security = False):
+    def __init__(self, jid, password, problem, max_iterations, port = 5222, verify_security = False):
         super().__init__(jid, password, port, verify_security)
         self.n_objectives = len(problem.objectives)
         self.can_send_target = False
@@ -99,6 +100,8 @@ class ForestOwner(Agent):
         self.objective_symbols = [obj.symbol for obj in problem.objectives]
         self.reference_point = None
         self.solution = None
+        self.iteration = 1
+        self.max_iterations = max_iterations
 
     class ReceiveInformMessages(CyclicBehaviour):
         def get_updated_reference_point(self, explanation: str, previous_reference_point):
@@ -123,6 +126,9 @@ class ForestOwner(Agent):
             msg = await self.receive(timeout=10)
             if msg:
                 contents = json.loads(msg.body)
+                # this could have been named more appropriately
+                # basically this is meant to be done the first time when sending a reference point and then a target
+                # this is done like this (at least it was initially) to make sure everyone is ready for this data
                 if "ready for target" in contents:
                     self.agent.can_send_target = True
                     #self.agent.add_behaviour(self.agent.SendData("problem"))
@@ -205,6 +211,16 @@ class ForestOwner(Agent):
                 await self.send(msg)
                 print(f"Number of objectives sent: {n_objectives}.")
             elif self.content_type == "reference point" and self.content:
+                if self.agent.iteration >= self.agent.max_iterations:
+                    print("Forest owner has reached its preset max number of iterations. Ending the solution process.")
+                    return
+                if self.agent.iteration == 1:
+                    print("Problem has been set up. Press C to start the solution process.")
+                    while True:
+                        if keyboard.is_pressed("c"):
+                            break
+                        await asyncio.sleep(0.1)
+                    print("Starting the solution process...")
                 self.agent.reference_point = self.content
                 contents = {"reference_point": self.content}
                 msg = Message(
@@ -217,6 +233,7 @@ class ForestOwner(Agent):
                 print("Forest owner sending a reference point...")
                 await self.send(msg)
                 print(f"A reference point sent: {self.content}.")
+                self.agent.iteration = self.agent.iteration + 1
     
     async def setup(self):
         print("Forest owner started.")
@@ -283,7 +300,7 @@ class ExplanationGatherer(Agent):
                 print("Explanaton gatherer requested a number of objectives.")
             elif self.request_content == "explanation":
                 msg = Message(
-                    to = f"explanationagent{self.agent.target}@localhost",
+                    to = f"explainer{self.agent.target}@localhost",
                     body = self.request_content,
                     metadata={"performative": "request"}
                 )
@@ -320,7 +337,7 @@ class ExplanationGatherer(Agent):
                         objective = self.agent.objective_symbols[i]
                         clean_symbol = objective.translate(str.maketrans('', '', string.punctuation))
                         msg_to_send = Message(
-                            to=f"explanationagent{clean_symbol}@localhost",
+                            to=f"explainer{clean_symbol}@localhost",
                             body=msg.body,
                             metadata={"performative": "inform"}
                         )
@@ -341,8 +358,8 @@ class ExplanationGatherer(Agent):
             for i in range(self.agent.n_objectives):
                 objective = self.objective_symbols[i]
                 clean_symbol = objective.translate(str.maketrans('', '', string.punctuation))
-                explanationAgent = ExplanationAgent(f"explanationagent{clean_symbol}@localhost", "explainer", objective=objective)
-                await explanationAgent.start(auto_register=True)
+                explainer = Explainer(f"explainer{clean_symbol}@localhost", "explainer", objective=objective)
+                await explainer.start(auto_register=True)
             msg = Message(
                 to="forestowner@localhost",
                 body=json.dumps("ready for target"),
@@ -357,7 +374,7 @@ class ExplanationGatherer(Agent):
         self.add_behaviour(receiveInformMessages, Template(metadata={"performative": "inform"}))
 
 
-class ExplanationAgent(Agent):
+class Explainer(Agent):
     def __init__(self, jid, password, objective: str, port = 5222, verify_security = False, **kwargs):
         super().__init__(jid, password, port, verify_security, **kwargs)
         self.objective = objective
@@ -467,7 +484,7 @@ async def main(n_objectives: int):
     await solverAgent.start(auto_register=True)
 
     # initialize and start a forest owner
-    forestOwner = ForestOwner("forestowner@localhost", "forestowner", problem=PROBLEM_ENUM["utopia_problem_old"])
+    forestOwner = ForestOwner("forestowner@localhost", "forestowner", problem=PROBLEM_ENUM["utopia_problem_old"], max_iterations=5)
     await forestOwner.start(auto_register=True)
 
     # initialize and start an explanation gatherer
