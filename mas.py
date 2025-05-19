@@ -9,6 +9,7 @@ import string
 import numpy as np
 import polars as pl
 
+from pathlib import Path
 from spade import wait_until_finished
 from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour, OneShotBehaviour
@@ -100,7 +101,7 @@ class ForestOwner(Agent):
         self.objective_symbols = [obj.symbol for obj in problem.objectives]
         self.reference_point = None
         self.solution = None
-        self.iteration = 1
+        self.iteration = 0
         self.max_iterations = max_iterations
 
     class ReceiveInformMessages(CyclicBehaviour):
@@ -113,11 +114,12 @@ class ForestOwner(Agent):
                 #amount_to_impair = float(re.sub(r"\D+$", "", explanation_split[explanation_split.index("by") + 1]))
                 #print(objective_to_improve, objective_to_impair, amount_to_impair)
                 # because the problem is maximization, when this is not known it should be checked
-                amount_to_improve = (self.agent.problem.get_ideal_point()[objective_to_improve] - self.agent.solution[objective_to_improve]) / 2
-                amount_to_impair = (self.agent.solution[objective_to_impair] - self.agent.problem.get_nadir_point()[objective_to_impair]) / 2
                 new_reference_point = self.agent.solution
+                amount_to_improve = (self.agent.problem.get_ideal_point()[objective_to_improve] - self.agent.solution[objective_to_improve]) / 2
+                if objective_to_impair != "None":
+                    amount_to_impair = (self.agent.solution[objective_to_impair] - self.agent.problem.get_nadir_point()[objective_to_impair]) / 2
+                    new_reference_point[objective_to_impair] = new_reference_point[objective_to_impair] - amount_to_impair
                 new_reference_point[objective_to_improve] = new_reference_point[objective_to_improve] + amount_to_improve
-                new_reference_point[objective_to_impair] = new_reference_point[objective_to_impair] - amount_to_impair
                 print(f"New reference point: {new_reference_point}")
                 return new_reference_point
 
@@ -140,6 +142,9 @@ class ForestOwner(Agent):
                 elif "solution" in contents:
                     self.agent.received_solution = True
                     self.agent.solution = contents["solution"]
+                    if self.agent.iteration >= self.agent.max_iterations:
+                        print("Forest owner has reached its preset max number of iterations. Ending the solution process.")
+                        return
                     if self.agent.can_send_target:
                         self.agent.add_behaviour(self.agent.SendData(content_type="target"))
                         self.agent.received_solution = False
@@ -195,7 +200,7 @@ class ForestOwner(Agent):
                     metadata={"performative": "inform"}
                 )
                 print("Forest owner thinking of an objective to improve...")
-                await asyncio.sleep(2)
+                await asyncio.sleep(5)
                 print("Forest owner sending the target...")
                 await self.send(msg)
                 print(f"Target sent: {target}.")
@@ -211,10 +216,7 @@ class ForestOwner(Agent):
                 await self.send(msg)
                 print(f"Number of objectives sent: {n_objectives}.")
             elif self.content_type == "reference point" and self.content:
-                if self.agent.iteration >= self.agent.max_iterations:
-                    print("Forest owner has reached its preset max number of iterations. Ending the solution process.")
-                    return
-                if self.agent.iteration == 1:
+                if self.agent.iteration == 0:
                     print("Problem has been set up. Press C to start the solution process.")
                     while True:
                         if keyboard.is_pressed("c"):
@@ -243,12 +245,13 @@ class ForestOwner(Agent):
         self.add_behaviour(receiveRequests, Template(metadata={"performative": "request"}))
 
 class ExplanationGatherer(Agent):
-    def __init__(self, jid, password, n_objectives, port = 5222, verify_security = False, **kwargs):
+    def __init__(self, jid, password, df: pl.DataFrame, port = 5222, verify_security = False, **kwargs):
         super().__init__(jid, password, port, verify_security, **kwargs)
-        self.n_objectives = n_objectives
+        self.n_objectives = None
         self.problem = None
         self.objective_symbols = []
         self.target = 0
+        self.df = df
 
     class SendExplanations(OneShotBehaviour):
         def __init__(self, explanation):
@@ -358,7 +361,7 @@ class ExplanationGatherer(Agent):
             for i in range(self.agent.n_objectives):
                 objective = self.objective_symbols[i]
                 clean_symbol = objective.translate(str.maketrans('', '', string.punctuation))
-                explainer = Explainer(f"explainer{clean_symbol}@localhost", "explainer", objective=objective)
+                explainer = Explainer(f"explainer{clean_symbol}@localhost", "explainer", objective=objective, df=self.agent.df)
                 await explainer.start(auto_register=True)
             msg = Message(
                 to="forestowner@localhost",
@@ -375,9 +378,10 @@ class ExplanationGatherer(Agent):
 
 
 class Explainer(Agent):
-    def __init__(self, jid, password, objective: str, port = 5222, verify_security = False, **kwargs):
+    def __init__(self, jid, password, objective: str, df: pl.DataFrame, port = 5222, verify_security = False, **kwargs):
         super().__init__(jid, password, port, verify_security, **kwargs)
         self.objective = objective
+        self.df = df
         self.can_send_explanation = False
         self.has_new_data = False
         self.solution = None
@@ -389,8 +393,8 @@ class Explainer(Agent):
 
         def generate_explanations(self, reference_point: dict):
             target = [value for _, value in reference_point.items()]
-            background_subset = generate_biased_mean_data(df[["f_1", "f_2", "f_3"]].to_numpy(), target, solver="GUROBI")
-            shap_model.setup(background_data=pl.DataFrame(df[background_subset]))
+            background_subset = generate_biased_mean_data(self.agent.df[["f_1", "f_2", "f_3"]].to_numpy(), target, solver="GUROBI")
+            shap_model.setup(background_data=pl.DataFrame(self.agent.df[background_subset]))
             shaps = shap_model.explain_input(pl.DataFrame({"z_1": target[0], "z_2": target[1], "z_3": target[2]})).values[0].T
             shaps_dict = {
                 "f_1": shaps[0],
@@ -419,6 +423,12 @@ class Explainer(Agent):
                     min_effect = value
                     #to_impair = key
                     to_improve = key
+            # here trying to not worsen the value of the objective by improving a component in the reference point that has a negative effect on the target
+            # though it is possible that the target has a negative effect on itself as well
+            if min_effect >= 0:
+                to_improve = self.agent.objective
+            if max_effect < 0:
+                to_impair = None
             print(self.agent.objective, shaps_for_this_agent_dict, to_improve, to_impair)
             explanation = f"To get better value for objective {self.agent.objective}, try to improve objective {to_improve} and impair objective {to_impair} in the reference point."
             return explanation
@@ -460,7 +470,7 @@ class Explainer(Agent):
             if msg:
                 contents = json.loads(msg.body)
                 if "solution" and "reference_point" in contents:
-                    print(f"{self.agent.jid.username} received data: {contents}")
+                    #print(f"{self.agent.jid.username} received data: {contents}")
                     self.agent.solution = contents["solution"]
                     self.agent.reference_point = contents["reference_point"]
                     self.agent.has_new_data = True
@@ -478,7 +488,7 @@ class Explainer(Agent):
         receiveRequests = self.ReceiveRequests()
         self.add_behaviour(receiveRequests, Template(metadata={"performative": "request"}))
 
-async def main(n_objectives: int):
+async def main(df: pl.DataFrame):
     # initialize and start the solver
     solverAgent = Solver("solver@localhost", "solver", solver=rpm_solve_solutions)
     await solverAgent.start(auto_register=True)
@@ -488,7 +498,7 @@ async def main(n_objectives: int):
     await forestOwner.start(auto_register=True)
 
     # initialize and start an explanation gatherer
-    explanationGatherer = ExplanationGatherer("explanationgatherer@localhost", "preference", n_objectives=n_objectives)
+    explanationGatherer = ExplanationGatherer("explanationgatherer@localhost", "preference", df=df)
     await explanationGatherer.start(auto_register=True)
     #explanationGatherer.web.start(hostname="127.0.0.1", port="10000")
 
@@ -500,15 +510,11 @@ async def main(n_objectives: int):
         await explanationGatherer.stop()
         await forestOwner.stop()
 
-if __name__ == "__main__":
-    # run the multi-agent system with three objectives (i.e., three explainers)
-    # NOTE: the number of objectives should come from the problem
-
-    # this seems like something the explanation gatherer should do as soon as it gets the problem
+def sample_input_space_to_file(n_samples: int):
     problem = PROBLEM_ENUM["utopia_problem_old"]
     ideal = problem.get_ideal_point()
     nadir = problem.get_nadir_point()
-    n_samples = 20
+    n_samples = n_samples
 
     bounds = {
         "f_1": (nadir["f_1"], ideal["f_1"]),
@@ -528,15 +534,28 @@ if __name__ == "__main__":
 
     outputs = []
 
-    z_dicts = []
     for input in input_dicts:
         d = rpm_solve_solutions(problem, input)[0].optimal_objectives
         for key, value in input.items():
             d[key.replace("f", "z")] = value
         outputs.append(d)
 
+    with Path.open("sample.json", "w") as file:
+        json.dump(outputs, file)
+
+if __name__ == "__main__":
+    # run the multi-agent system with three objectives (i.e., three explainers)
+
+    # this seems like something the explanation gatherer should do as soon as it gets the problem
+    #sample_input_space_to_file(n_samples=200)
+    
+    outputs = []
+
+    with Path.open("sample.json", "r") as file:
+        outputs = json.load(file)
+
     df = pl.DataFrame(outputs)
 
     shap_model = ShapExplainer(problem_data=df, input_symbols=["z_1", "z_2", "z_3"], output_symbols=["f_1", "f_2", "f_3"])
 
-    spade.run(main(n_objectives=3))
+    spade.run(main(df=df))
