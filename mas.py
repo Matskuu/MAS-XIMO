@@ -10,7 +10,6 @@ import numpy as np
 import polars as pl
 
 from pathlib import Path
-from spade import wait_until_finished
 from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour, OneShotBehaviour
 from spade.message import Message
@@ -267,7 +266,7 @@ class ExplanationGatherer(Agent):
                     metadata={"performative": "request"}
                 )
                 await self.send(msg)
-                print("Explanaton gatherer requested the problem.")
+                print("Explanation gatherer requested the problem.")
             elif self.request_content == "explanation":
                 msg = Message(
                     to = f"explainer{self.agent.target}@localhost",
@@ -275,7 +274,7 @@ class ExplanationGatherer(Agent):
                     metadata={"performative": "request"}
                 )
                 await self.send(msg)
-                print("Explanaton gatherer requested an explanation from the target explainer.")
+                print("Explanation gatherer requested an explanation from the target explainer.")
     
     class ReceiveInformMessages(CyclicBehaviour):
         async def run(self):
@@ -435,9 +434,6 @@ class Explainer(Agent):
                     if self.agent.can_send_explanation:
                         self.agent.add_behaviour(self.agent.SendExplanations())
                         self.agent.has_new_data = False
-            """else:
-                print(f"{self.agent.jid.username} has not received a message after 10 seconds.")
-                #self.kill()"""
 
     async def setup(self):
         print(f"{self.jid.username} started.")
