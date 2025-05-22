@@ -37,15 +37,6 @@ class Solver(Agent):
     class SendSolution(OneShotBehaviour):
         async def run(self):
             print("Solver sending a solution...")
-            contents = {"solution": self.agent.solution}
-            msg = Message(
-                to="preferenceagent@localhost",
-                body=json.dumps(contents),
-                metadata={"performative": "inform"}
-            )
-            await self.send(msg)
-            print(f"Solution sent to preference agent: {self.agent.solution}")
-
             contents = {
                 "solution": self.agent.solution,
                 "reference_point": self.agent.reference_point
@@ -57,6 +48,15 @@ class Solver(Agent):
             )
             await self.send(msg)
             print(f"Solution and reference point sent to explanation gatherer: {contents}")
+            
+            contents = {"solution": self.agent.solution}
+            msg = Message(
+                to="preferenceagent@localhost",
+                body=json.dumps(contents),
+                metadata={"performative": "inform"}
+            )
+            await self.send(msg)
+            print(f"Solution sent to preference agent: {self.agent.solution}")
 
     class Solve(OneShotBehaviour):
         async def run(self):
@@ -103,6 +103,8 @@ class PreferenceAgent(Agent):
         self.solution = None
         self.iteration = 0
         self.max_iterations = max_iterations
+        self.explanation = None
+        self.examples = None
 
     class ReceiveInformMessages(CyclicBehaviour):
         def get_updated_reference_point(self, explanation: str, previous_reference_point):
@@ -114,7 +116,7 @@ class PreferenceAgent(Agent):
                 #amount_to_impair = float(re.sub(r"\D+$", "", explanation_split[explanation_split.index("by") + 1]))
                 #print(objective_to_improve, objective_to_impair, amount_to_impair)
                 # because the problem is maximization, when this is not known it should be checked
-                new_reference_point = self.agent.solution
+                new_reference_point = self.agent.solution.copy()
                 amount_to_improve = (self.agent.problem.get_ideal_point()[objective_to_improve] - self.agent.solution[objective_to_improve]) / 2
                 if objective_to_impair != "None":
                     amount_to_impair = (self.agent.solution[objective_to_impair] - self.agent.problem.get_nadir_point()[objective_to_impair]) / 2
@@ -149,10 +151,13 @@ class PreferenceAgent(Agent):
                     if self.agent.can_send_target:
                         self.agent.add_behaviour(self.agent.SendData(content_type="target"))
                         self.agent.received_solution = False
-                elif "explanation" in contents:
+                elif "explanation" and "examples" in contents:
                     print("Preference agent received an explanation.")
+                    self.agent.explanation = contents["explanation"]
+                    self.agent.examples = contents["examples"]
+                    print(self.agent.explanation)
+                    print(self.agent.examples)
                     self.agent.add_behaviour(self.agent.SendData("reference point"))
-
 
     class ReceiveRequests(CyclicBehaviour):
         async def run(self):
@@ -182,8 +187,6 @@ class PreferenceAgent(Agent):
                     body=json.dumps(contents),
                     metadata={"performative": "inform"}
                 )
-                print("Preference agent thinking of an objective to improve...")
-                await asyncio.sleep(5)
                 print("Preference agent sending the target...")
                 await self.send(msg)
                 print(f"Target sent: {target}.")
@@ -201,14 +204,8 @@ class PreferenceAgent(Agent):
                     await self.send(msg)
                 print(f"The problem sent: {self.agent.problem.name}.")
             elif self.content_type == "reference point":
-                if self.agent.iteration == 0:
-                    print("Problem has been set up. Press C to start the solution process.")
-                    while True:
-                        if keyboard.is_pressed("c"):
-                            break
-                        await asyncio.sleep(0.1)
-                    print("Starting the solution process...")
                 for symbol in self.agent.objective_symbols:
+                    # TODO: check the reference point component values and if not between ideal and nadir, ask for a component value
                     value = input(f"Provide a value for objective {symbol}: ")
                     if value == "ideal":
                         self.agent.reference_point[symbol] = self.agent.problem_ideal[symbol]
@@ -225,8 +222,6 @@ class PreferenceAgent(Agent):
                     body=json.dumps(contents),
                     metadata={"performative": "inform"}
                 )
-                print("Preference agent choosing a reference point...")
-                await asyncio.sleep(5) #Preference agent thinking
                 print("Preference agent sending a reference point...")
                 await self.send(msg)
                 print(f"A reference point sent: {self.agent.reference_point}.")
@@ -245,23 +240,51 @@ class ExplanationGatherer(Agent):
         self.n_objectives = None
         self.problem = None
         self.objective_symbols = []
-        self.target = 0
+        self.target = None
         self.df = df
+        self.reference_point = None
+        self.solution = None
+        self.shaps = None
+        self.explanation = None
 
-    class SendExplanations(OneShotBehaviour):
-        def __init__(self, explanation):
+    class GenerateShaps(OneShotBehaviour):
+        async def run(self):
+            target = [value for _, value in self.agent.reference_point.items()]
+            background_subset = generate_biased_mean_data(self.agent.df[["f_1", "f_2", "f_3"]].to_numpy(), target, solver="GUROBI")
+            shap_model.setup(background_data=pl.DataFrame(self.agent.df[background_subset]))
+            self.agent.shaps = shap_model.explain_input(pl.DataFrame({"z_1": target[0], "z_2": target[1], "z_3": target[2]})).values[0].T
+
+    class SendInformMessages(OneShotBehaviour):
+        def __init__(self, content_type: str):
             super().__init__()
-            self.explanation = explanation
+            self.content_type = content_type
 
         async def run(self):
-            #print(f"Explanation gatherer sending the explanation {self.explanation} to Preference agent...")
-            msg = Message(
-                to = "preferenceagent@localhost",
-                body = json.dumps({"explanation": self.explanation}),
-                metadata={"performative": "inform"}
-            )
-            await self.send(msg)
-            print("Explanation gatherer sent the explanation to Preference agent.")
+            if self.content_type == "shaps":
+                contents = {
+                    "reference_point": self.agent.reference_point,
+                    "solution": self.agent.solution,
+                    "shaps": self.agent.shaps.tolist()
+                }
+                for symbol in self.agent.objective_symbols:
+                    clean_symbol = symbol.translate(str.maketrans('', '', string.punctuation))
+                    msg = Message(
+                        to=f"explainer{clean_symbol}@localhost",
+                        body=json.dumps(contents),
+                        metadata={"performative": "inform"}
+                    )
+                    await self.send(msg)
+            elif self.content_type == "explanation":
+                contents = {
+                    "explanation": self.agent.explanation,
+                    "examples": self.agent.examples
+                }
+                msg = Message(
+                    to="preferenceagent@localhost",
+                    body=json.dumps(contents),
+                    metadata={"performative": "inform"}
+                )
+                await self.send(msg)
 
     class SendRequests(OneShotBehaviour):
         def __init__(self, request_content: str):
@@ -278,14 +301,15 @@ class ExplanationGatherer(Agent):
                 )
                 await self.send(msg)
                 print("Explanation gatherer requested the problem.")
-            elif self.request_content == "explanation":
+            elif self.request_content == "examples":
+                clean_symbol = self.agent.target.translate(str.maketrans('', '', string.punctuation))
                 msg = Message(
-                    to = f"explainer{self.agent.target}@localhost",
+                    to = f"explainer{clean_symbol}@localhost",
                     body = self.request_content,
                     metadata={"performative": "request"}
                 )
                 await self.send(msg)
-                print("Explanation gatherer requested an explanation from the target explainer.")
+                print("Explanation gatherer requested examples from the target explainer.")
     
     class ReceiveInformMessages(CyclicBehaviour):
         async def run(self):
@@ -299,38 +323,39 @@ class ExplanationGatherer(Agent):
                     self.agent.problem = problem
                     self.agent.n_objectives = len(problem.objectives)
                     self.agent.objective_symbols = [obj.symbol for obj in problem.objectives]
-                    self.agent.add_behaviour(self.agent.CreateExplainers(objective_symbols=self.agent.objective_symbols))
+                    self.agent.add_behaviour(self.agent.CreateExplainers())
                 elif "target" in contents:
                     print(f"Explanation gatherer received the target: {contents["target"]}")
-                    self.agent.target = contents["target"].translate(str.maketrans('', '', string.punctuation))
-                    self.agent.add_behaviour(self.agent.SendRequests("explanation"))
-                elif "explanation" in contents:
-                    print(f"Explanation gatherer received explanations: \n    {contents["explanation"]}")
-                    self.agent.add_behaviour(self.agent.SendExplanations(contents["explanation"]))
+                    #self.agent.target = contents["target"].translate(str.maketrans('', '', string.punctuation))
+                    self.agent.target = contents["target"]
+                    """generate_explanations = self.agent.GenerateExplanations()
+                    self.agent.add_behaviour(generate_explanations)
+                    await generate_explanations.join()"""
+                    #self.agent.add_behaviour(self.agent.SendInformMessages(content_type="shaps"))
+                    self.agent.add_behaviour(self.agent.SendRequests(request_content="examples"))
+                    #self.agent.add_behaviour(self.agent.SendRequests("explanation"))
                 elif "solution" in contents:
                     print(f"Explanation gatherer received a solution and reference point: {contents}")
-                    for i in range(len(self.agent.objective_symbols)):
-                        objective = self.agent.objective_symbols[i]
-                        clean_symbol = objective.translate(str.maketrans('', '', string.punctuation))
-                        msg_to_send = Message(
-                            to=f"explainer{clean_symbol}@localhost",
-                            body=msg.body,
-                            metadata={"performative": "inform"}
-                        )
-                        await self.send(msg_to_send)
-                    print("Explanation gatherer shared the solution and reference point with the explainers.")
+                    self.agent.reference_point = contents["reference_point"]
+                    self.agent.solution = contents["solution"]
+                    generate_shaps = self.agent.GenerateShaps()
+                    self.agent.add_behaviour(generate_shaps)
+                    await generate_shaps.join()
+                    self.agent.add_behaviour(self.agent.SendInformMessages(content_type="shaps"))
+                elif "examples" and "explanation" in contents:
+                    #print(f"Explanation gatherer received examples: \n  {contents["examples"]}")
+                    self.agent.examples = contents["examples"]
+                    self.agent.explanation = contents["explanation"]
+                    self.agent.add_behaviour(self.agent.SendInformMessages(content_type="explanation"))
+
 
     class CreateExplainers(OneShotBehaviour):
-        def __init__(self, objective_symbols, **kwargs):
-            super().__init__(**kwargs)
-            self.objective_symbols = objective_symbols
-
         async def run(self):
             print(f"Explanation gatherer creating {self.agent.n_objectives} explainers...")
             for i in range(self.agent.n_objectives):
-                objective = self.objective_symbols[i]
+                objective = self.agent.objective_symbols[i]
                 clean_symbol = objective.translate(str.maketrans('', '', string.punctuation))
-                explainer = Explainer(f"explainer{clean_symbol}@localhost", "explainer", objective=objective, df=self.agent.df)
+                explainer = Explainer(f"explainer{clean_symbol}@localhost", "explainer", objective=objective, df=self.agent.df, problem=self.agent.problem)
                 await explainer.start(auto_register=True)
             msg = Message(
                 to="preferenceagent@localhost",
@@ -347,24 +372,38 @@ class ExplanationGatherer(Agent):
 
 
 class Explainer(Agent):
-    def __init__(self, jid, password, objective: str, df: pl.DataFrame, port = 5222, verify_security = False, **kwargs):
+    def __init__(self, jid, password, objective: str, df: pl.DataFrame, problem, port = 5222, verify_security = False, **kwargs):
         super().__init__(jid, password, port, verify_security, **kwargs)
         self.objective = objective
         self.df = df
-        self.can_send_explanation = False
+        self.problem = problem
+        self.can_send_examples = False
         self.has_new_data = False
+        self.ready_to_send_examples = False
         self.solution = None
         self.reference_point = None
+        self.examples = None
+        self.explanation = None
 
-    class SendExplanations(OneShotBehaviour):
-        def __init__(self, **kwargs):
-            super().__init__(**kwargs)
+    class ReceiveRequests(CyclicBehaviour):
+        async def run(self):
+            #print(f"{self.agent.jid.username} ready to receive requests.")
+            msg = await self.receive(timeout=10)
+            if msg:
+                if msg.body == "examples":
+                    self.agent.can_send_examples = True
+                    if self.agent.ready_to_send_examples:
+                        self.agent.add_behaviour(self.agent.SendExamples())
+                        self.agent.can_send_examples = False
 
-        def generate_explanations(self, reference_point: dict):
-            target = [value for _, value in reference_point.items()]
-            background_subset = generate_biased_mean_data(self.agent.df[["f_1", "f_2", "f_3"]].to_numpy(), target, solver="GUROBI")
-            shap_model.setup(background_data=pl.DataFrame(self.agent.df[background_subset]))
-            shaps = shap_model.explain_input(pl.DataFrame({"z_1": target[0], "z_2": target[1], "z_3": target[2]})).values[0].T
+    class GenerateExamples(OneShotBehaviour):
+        def __init__(self, number_of_examples: int):
+            super().__init__()
+            self.number_of_examples = number_of_examples
+
+        async def run(self):
+            examples = []
+            shaps = self.agent.shaps
             shaps_dict = {
                 "f_1": shaps[0],
                 "f_2": shaps[1],
@@ -398,38 +437,42 @@ class Explainer(Agent):
                 to_improve = self.agent.objective
             if max_effect < 0:
                 to_impair = None
-            #print(self.agent.objective, shaps_for_this_agent_dict, to_improve, to_impair)
-            explanation = f"To get better value for objective {self.agent.objective}, try to improve objective {to_improve} and impair objective {to_impair} in the reference point."
-            return explanation
 
+            explanation = f"To get better value for objective {self.agent.objective}, try to improve objective {to_improve} and impair objective {to_impair} in the reference point."
+            self.agent.explanation = explanation
+
+            # assuming that some component gets improved every time for now
+            for i in range(self.number_of_examples):
+                new_reference_point = self.agent.solution.copy()
+                amount_to_improve = (self.agent.problem.get_ideal_point()[to_improve] - self.agent.solution[to_improve]) / (10/(i+1))
+                new_reference_point[to_improve] = new_reference_point[to_improve] + amount_to_improve
+                if to_impair:
+                    amount_to_impair = (self.agent.solution[to_impair] - self.agent.problem.get_nadir_point()[to_impair]) / (10/(i+1))
+                    new_reference_point[to_impair] = new_reference_point[to_impair] - amount_to_impair
+                solution = rpm_solve_solutions(self.agent.problem, new_reference_point)[0].optimal_objectives
+                examples.append((new_reference_point, solution))
+            self.agent.examples = examples
+            self.agent.ready_to_send_examples = True
+            print(f"{self.agent.jid.username} ready to send examples.")
+            #print(examples)
+    
+    class SendExamples(OneShotBehaviour):
         async def run(self):
-            explanation = self.generate_explanations(self.agent.reference_point)
-            print(f"{self.agent.jid.username} sending explanations...")
+            print(f"{self.agent.jid.username} sending examples...")
             contents = {
-                "explanation": explanation
+                "explanation": self.agent.explanation,
+                "examples": self.agent.examples
             }
+            # TODO: should this be sent straight to the preference agent instead?
             msg = Message(
                 to="explanationgatherer@localhost",
                 body=json.dumps(contents),
                 metadata={"performative": "inform"}
             )
-
             await self.send(msg)
-            print("Explanations sent.")
-
+            print("Examples sent.")
+            self.agent.ready_to_send_examples = False
             self.agent.has_new_data = False
-            self.agent.can_send_explanation = False
-
-    class ReceiveRequests(CyclicBehaviour):
-        async def run(self):
-            #print(f"{self.agent.jid.username} ready to receive requests.")
-            msg = await self.receive(timeout=10)
-            if msg:
-                if msg.body == "explanation":
-                    self.agent.can_send_explanation = True
-                    if self.agent.has_new_data:
-                        self.agent.add_behaviour(self.agent.SendExplanations())
-                        self.agent.can_send_explanation = False
 
     class ReceiveInformMessages(CyclicBehaviour):
         async def run(self):
@@ -437,14 +480,17 @@ class Explainer(Agent):
             msg = await self.receive(timeout=10)
             if msg:
                 contents = json.loads(msg.body)
-                if "solution" and "reference_point" in contents:
+                if "shaps" and "solution" and "reference_point" in contents:
                     #print(f"{self.agent.jid.username} received data: {contents}")
                     self.agent.solution = contents["solution"]
                     self.agent.reference_point = contents["reference_point"]
+                    self.agent.shaps = contents["shaps"]
                     self.agent.has_new_data = True
-                    if self.agent.can_send_explanation:
-                        self.agent.add_behaviour(self.agent.SendExplanations())
-                        self.agent.has_new_data = False
+                    generate_examples = self.agent.GenerateExamples(number_of_examples=5)
+                    self.agent.add_behaviour(generate_examples)
+                    if self.agent.can_send_examples:
+                        self.agent.add_behaviour(self.agent.SendExamples())
+                        self.agent.can_send_examples = False
 
     async def setup(self):
         print(f"{self.jid.username} started.")
