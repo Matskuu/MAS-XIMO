@@ -17,13 +17,16 @@ from spade.template import Template
 
 from desdeo.explanations import ShapExplainer, generate_biased_mean_data
 from desdeo.mcdm import rpm_solve_solutions
+from desdeo.problem import Problem
+from desdeo.problem.testproblems import pareto_navigator_test_problem
 from desdeo.utopia_stuff.utopia_problem_old import utopia_problem_old
 
 
 shap_model = None
 
 PROBLEM_ENUM = {
-    "utopia_problem_old": utopia_problem_old()[0]
+    "utopia_problem_old": utopia_problem_old()[0],
+    "pareto_navigator_test_problem": pareto_navigator_test_problem()
 }
 
 class Solver(Agent):
@@ -91,14 +94,15 @@ class Solver(Agent):
         self.add_behaviour(receiveInformMessages, Template(metadata={"performative": "inform"}))
 
 class PreferenceAgent(Agent):
-    def __init__(self, jid, password, problem, max_iterations, port = 5222, verify_security = False):
+    def __init__(self, jid, password, problem_name, max_iterations, port = 5222, verify_security = False):
         super().__init__(jid, password, port, verify_security)
         self.can_send_target = False
         self.received_solution = False
-        self.problem = problem
-        self.objective_symbols = [obj.symbol for obj in problem.objectives]
-        self.problem_ideal = problem.get_ideal_point()
-        self.problem_nadir = problem.get_nadir_point()
+        self.problem = PROBLEM_ENUM[problem_name]
+        self.problem_name = problem_name
+        self.objective_symbols = [obj.symbol for obj in self.problem.objectives]
+        self.problem_ideal = self.problem.get_ideal_point()
+        self.problem_nadir = self.problem.get_nadir_point()
         self.reference_point = {}
         self.solution = None
         self.iteration = 0
@@ -156,7 +160,11 @@ class PreferenceAgent(Agent):
                     self.agent.explanation = contents["explanation"]
                     self.agent.examples = contents["examples"]
                     print(self.agent.explanation)
-                    print(self.agent.examples)
+                    print("-----------------------------------------")
+                    for pair in contents["examples"]:
+                        print(f"Reference point: {pair[0]}")
+                        print(f"Solution: {pair[1]}")
+                        print("-----------------------------------------")
                     self.agent.add_behaviour(self.agent.SendData("reference point"))
 
     class ReceiveRequests(CyclicBehaviour):
@@ -195,7 +203,7 @@ class PreferenceAgent(Agent):
                 #problem_name = input("Provide the problem name: ")
                 recipients = ["solver@localhost", "explanationgatherer@localhost"]
                 for recipient in recipients:
-                    contents = {"problem": "utopia_problem_old"}
+                    contents = {"problem": self.agent.problem_name}
                     msg = Message(
                         to=recipient,
                         body=json.dumps(contents),
@@ -229,10 +237,80 @@ class PreferenceAgent(Agent):
     
     async def setup(self):
         print("Preference agent started.")
-        receiveInformMessages = self.ReceiveInformMessages()
-        self.add_behaviour(receiveInformMessages, Template(metadata={"performative": "inform"}))
-        receiveRequests = self.ReceiveRequests()
-        self.add_behaviour(receiveRequests, Template(metadata={"performative": "request"}))
+        receive_inform_messages = self.ReceiveInformMessages()
+        self.add_behaviour(receive_inform_messages, Template(metadata={"performative": "inform"}))
+        receive_requests = self.ReceiveRequests()
+        self.add_behaviour(receive_requests, Template(metadata={"performative": "request"}))
+
+class SHAPAgent(Agent):
+    def __init__(self, jid, password, df: pl.DataFrame, port = 5222, verify_security = False):
+        super().__init__(jid, password, port, verify_security)
+        self.reference_point = None
+        self.solution = None
+        self.df = df
+        self.shaps = None
+        self.problem = None
+        self.objective_symbols = None
+
+    class SendInformMessages(OneShotBehaviour):
+        def __init__(self, content_type: str):
+            super().__init__()
+            self.content_type = content_type
+
+        async def run(self):
+            if self.content_type == "shaps":
+                msg = Message(
+                    to="explanationgatherer@localhost",
+                    body=json.dumps({"shaps": self.agent.shaps.tolist()}),
+                    metadata={"performative": "inform"}
+                )
+                await self.send(msg)
+
+                # TODO: alternatively send the shaps straight to the explainers instead
+                """contents = {
+                    "reference_point": self.agent.reference_point,
+                    "solution": self.agent.solution,
+                    "shaps": self.agent.shaps.tolist()
+                }
+                for symbol in self.agent.objective_symbols:
+                    clean_symbol = symbol.translate(str.maketrans('', '', string.punctuation))
+                    msg = Message(
+                        to=f"explainer{clean_symbol}@localhost",
+                        body=json.dumps(contents),
+                        metadata={"performative": "inform"}
+                    )
+                    await self.send(msg)"""
+
+    class GenerateSHAPs(OneShotBehaviour):
+        async def run(self):
+            target = [value for _, value in self.agent.reference_point.items()]
+            background_subset = generate_biased_mean_data(self.agent.df[["f_1", "f_2", "f_3"]].to_numpy(), target, solver="GUROBI")
+            shap_model.setup(background_data=pl.DataFrame(self.agent.df[background_subset]))
+            self.agent.shaps = shap_model.explain_input(pl.DataFrame({"z_1": target[0], "z_2": target[1], "z_3": target[2]})).values[0].T
+
+    class ReceiveInformMessages(CyclicBehaviour):
+        async def run(self):
+            msg = await self.receive(timeout=10)
+            if msg:
+                contents = json.loads(msg.body)
+                if "reference_point" and "solution" in contents:
+                    print(f"SHAP agent received a solution and reference point: {contents}")
+                    self.agent.reference_point = contents["reference_point"]
+                    self.agent.solution = contents["solution"]
+                    generate_shaps = self.agent.GenerateSHAPs()
+                    self.agent.add_behaviour(generate_shaps)
+                    await generate_shaps.join()
+                    self.agent.add_behaviour(self.agent.SendInformMessages(content_type="shaps"))
+                elif "problem" in contents:
+                    problem = PROBLEM_ENUM[contents["problem"]]
+                    print(f"Explanation gatherer received the problem: {problem.name}")
+                    self.agent.problem = problem
+                    self.agent.n_objectives = len(problem.objectives)
+                    self.agent.objective_symbols = [obj.symbol for obj in problem.objectives]
+
+    async def setup(self):
+        receive_inform_messages = self.ReceiveInformMessages()
+        self.add_behaviour(receive_inform_messages, Template(metadata={"performative": "request"}))
 
 class ExplanationGatherer(Agent):
     def __init__(self, jid, password, df: pl.DataFrame, port = 5222, verify_security = False, **kwargs):
@@ -334,7 +412,7 @@ class ExplanationGatherer(Agent):
                     #self.agent.add_behaviour(self.agent.SendInformMessages(content_type="shaps"))
                     self.agent.add_behaviour(self.agent.SendRequests(request_content="examples"))
                     #self.agent.add_behaviour(self.agent.SendRequests("explanation"))
-                elif "solution" in contents:
+                elif "reference_point" and "solution" in contents:
                     print(f"Explanation gatherer received a solution and reference point: {contents}")
                     self.agent.reference_point = contents["reference_point"]
                     self.agent.solution = contents["solution"]
@@ -347,6 +425,9 @@ class ExplanationGatherer(Agent):
                     self.agent.examples = contents["examples"]
                     self.agent.explanation = contents["explanation"]
                     self.agent.add_behaviour(self.agent.SendInformMessages(content_type="explanation"))
+                elif "shaps" in contents:
+                    self.agent.shaps = contents["shaps"]
+                    self.agent.add_behaviour(self.agent.SendInformMessages(content_type="shaps"))
 
 
     class CreateExplainers(OneShotBehaviour):
@@ -377,6 +458,7 @@ class Explainer(Agent):
         self.objective = objective
         self.df = df
         self.problem = problem
+        self.objective_symbols = [obj.symbol for obj in problem.objectives]
         self.can_send_examples = False
         self.has_new_data = False
         self.ready_to_send_examples = False
@@ -404,17 +486,19 @@ class Explainer(Agent):
         async def run(self):
             examples = []
             shaps = self.agent.shaps
-            shaps_dict = {
-                "f_1": shaps[0],
-                "f_2": shaps[1],
-                "f_3": shaps[2]
-            }
+            # TODO: make these problem specific
+            shaps_dict = {}
+            if len(shaps) == len(self.agent.objective_symbols):
+                shaps_dict = {
+                    self.agent.objective_symbols[i]: shaps[i]
+                    for i in range(len(shaps))
+                }
             shaps_for_this_agent = shaps_dict[self.agent.objective]
-            shaps_for_this_agent_dict = {
-                "f_1": shaps_for_this_agent[0],
-                "f_2": shaps_for_this_agent[1],
-                "f_3": shaps_for_this_agent[2]
-            }
+            if len(self.agent.objective_symbols) == len(shaps_for_this_agent):
+                shaps_for_this_agent_dict = {
+                    self.agent.objective_symbols[i]: shaps_for_this_agent[i]
+                    for i in range(len(shaps_for_this_agent))
+                }
             # initialize these with no default value
             to_improve = None
             to_impair = None
@@ -442,6 +526,7 @@ class Explainer(Agent):
             self.agent.explanation = explanation
 
             # assuming that some component gets improved every time for now
+            # TODO: should the basis be the original reference point from the DM or the solution?
             for i in range(self.number_of_examples):
                 new_reference_point = self.agent.solution.copy()
                 amount_to_improve = (self.agent.problem.get_ideal_point()[to_improve] - self.agent.solution[to_improve]) / (10/(i+1))
@@ -486,8 +571,7 @@ class Explainer(Agent):
                     self.agent.reference_point = contents["reference_point"]
                     self.agent.shaps = contents["shaps"]
                     self.agent.has_new_data = True
-                    generate_examples = self.agent.GenerateExamples(number_of_examples=5)
-                    self.agent.add_behaviour(generate_examples)
+                    self.agent.add_behaviour(self.agent.GenerateExamples(number_of_examples=5))
                     if self.agent.can_send_examples:
                         self.agent.add_behaviour(self.agent.SendExamples())
                         self.agent.can_send_examples = False
@@ -505,7 +589,7 @@ async def main(df: pl.DataFrame):
     await solverAgent.start(auto_register=True)
 
     # initialize and start a preference agent
-    preferenceAgent = PreferenceAgent("preferenceagent@localhost", "preferenceagent", problem=PROBLEM_ENUM["utopia_problem_old"], max_iterations=5)
+    preferenceAgent = PreferenceAgent("preferenceagent@localhost", "preferenceagent", problem_name="utopia_problem_old", max_iterations=5)
     await preferenceAgent.start(auto_register=True)
 
     # initialize and start an explanation gatherer
@@ -522,16 +606,17 @@ async def main(df: pl.DataFrame):
         await explanationGatherer.stop()
         await preferenceAgent.stop()
 
-def sample_input_space_to_file(n_samples: int):
-    problem = PROBLEM_ENUM["utopia_problem_old"]
+def sample_input_space_to_file(n_samples: int, problem_name: str = None, file_name: str = None):
+    problem = PROBLEM_ENUM[problem_name] if problem_name else PROBLEM_ENUM["utopia_problem_old"]
     ideal = problem.get_ideal_point()
     nadir = problem.get_nadir_point()
     n_samples = n_samples
 
+    obj_symbols = [obj.symbol for obj in problem.objectives]
+
     bounds = {
-        "f_1": (nadir["f_1"], ideal["f_1"]),
-        "f_2": (nadir["f_2"], ideal["f_2"]),
-        "f_3": (nadir["f_3"], ideal["f_3"])
+        symbol: (nadir[symbol], ideal[symbol])
+        for symbol in obj_symbols
     }
 
     inputs = {
@@ -552,14 +637,18 @@ def sample_input_space_to_file(n_samples: int):
             d[key.replace("f", "z")] = value
         outputs.append(d)
 
-    with Path.open("sample.json", "w") as file:
-        json.dump(outputs, file)
+    if file_name:
+        with Path.open(f"{file_name}.json", "w") as file:
+            json.dump(outputs, file)
+    else:
+        with Path.open("sample.json", "w") as file:
+            json.dump(outputs, file)
 
 if __name__ == "__main__":
     # run the multi-agent system with three objectives (i.e., three explainers)
 
     # this seems like something the explanation gatherer should do as soon as it gets the problem
-    #sample_input_space_to_file(n_samples=20)
+    #sample_input_space_to_file(n_samples=20, problem_name="utopia_problem_old")
     
     outputs = []
 
