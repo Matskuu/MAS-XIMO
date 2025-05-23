@@ -484,7 +484,6 @@ class Explainer(Agent):
             self.number_of_examples = number_of_examples
 
         async def run(self):
-            examples = []
             shaps = self.agent.shaps
             # TODO: make these problem specific
             shaps_dict = {}
@@ -527,7 +526,10 @@ class Explainer(Agent):
 
             # assuming that some component gets improved every time for now
             # TODO: should the basis be the original reference point from the DM or the solution?
-            for i in range(self.number_of_examples):
+            examples = []
+            max_iterations = 10
+            i = 1
+            while len(examples) < self.number_of_examples and i < max_iterations:
                 new_reference_point = self.agent.solution.copy()
                 amount_to_improve = (self.agent.problem.get_ideal_point()[to_improve] - self.agent.solution[to_improve]) / (10/(i+1))
                 new_reference_point[to_improve] = new_reference_point[to_improve] + amount_to_improve
@@ -535,7 +537,23 @@ class Explainer(Agent):
                     amount_to_impair = (self.agent.solution[to_impair] - self.agent.problem.get_nadir_point()[to_impair]) / (10/(i+1))
                     new_reference_point[to_impair] = new_reference_point[to_impair] - amount_to_impair
                 solution = rpm_solve_solutions(self.agent.problem, new_reference_point)[0].optimal_objectives
-                examples.append((new_reference_point, solution))
+                unique = True
+                for example in examples:
+                    if solution == example[1]:
+                        unique = False
+                        break
+                if (solution[self.agent.objective] > self.agent.solution[self.agent.objective]) and unique:
+                    examples.append((new_reference_point, solution))
+                i = i + 1
+            """for i in range(self.number_of_examples):
+                new_reference_point = self.agent.solution.copy()
+                amount_to_improve = (self.agent.problem.get_ideal_point()[to_improve] - self.agent.solution[to_improve]) / (10/(i+1))
+                new_reference_point[to_improve] = new_reference_point[to_improve] + amount_to_improve
+                if to_impair:
+                    amount_to_impair = (self.agent.solution[to_impair] - self.agent.problem.get_nadir_point()[to_impair]) / (10/(i+1))
+                    new_reference_point[to_impair] = new_reference_point[to_impair] - amount_to_impair
+                solution = rpm_solve_solutions(self.agent.problem, new_reference_point)[0].optimal_objectives
+                examples.append((new_reference_point, solution))"""
             self.agent.examples = examples
             self.agent.ready_to_send_examples = True
             print(f"{self.agent.jid.username} ready to send examples.")
