@@ -184,11 +184,12 @@ class PreferenceAgent(Agent):
 
         async def run(self):
             if self.content_type == "target":
-                target = input("Provide an objective to improve: ")
-                if target not in self.agent.objective_symbols:
-                    # TODO: should do some iterating here if invalid target
-                    print("Target not valid!")
-                    target = "f_1"
+                while True:
+                    target = input("Provide an objective to improve: ")
+                    if target in self.agent.objective_symbols:
+                        break
+                    else:
+                        print(f"Target not valid. Please enter one of the objectives: {self.agent.objective_symbols}.")
                 contents = {"target": target}
                 msg = Message(
                     to="explanationgatherer@localhost",
@@ -213,17 +214,35 @@ class PreferenceAgent(Agent):
                 print(f"The problem sent: {self.agent.problem.name}.")
             elif self.content_type == "reference point":
                 for symbol in self.agent.objective_symbols:
-                    # TODO: check the reference point component values and if not between ideal and nadir, ask for a component value
-                    value = input(f"Provide a value for objective {symbol}: ")
-                    if value == "ideal":
-                        self.agent.reference_point[symbol] = self.agent.problem_ideal[symbol]
-                    elif value == "nadir":
-                        self.agent.reference_point[symbol] = self.agent.problem_nadir[symbol]
-                    elif not value.isnumeric():
-                        # TODO: should do something more fancy here
-                        self.agent.reference_point[symbol] = self.agent.problem_ideal[symbol]
-                    else:
-                        self.agent.reference_point[symbol] = float(value)
+                    minimize = False
+                    if self.agent.problem_ideal[symbol] < self.agent.problem_nadir[symbol]:
+                        minimize = True
+                    while True:
+                        try:
+                            value = input(f"Provide a value for objective {symbol}: ")
+                            if value == "ideal":
+                                self.agent.reference_point[symbol] = self.agent.problem_ideal[symbol]
+                                break
+                            elif value == "nadir":
+                                self.agent.reference_point[symbol] = self.agent.problem_nadir[symbol]
+                                break
+                            else:
+                                minimize = False
+                                if self.agent.problem_ideal[symbol] < self.agent.problem_nadir[symbol]:
+                                    minimize = True
+                                if minimize and self.agent.problem_ideal[symbol] <= float(value) <= self.agent.problem_nadir[symbol]:
+                                    self.agent.reference_point[symbol] = float(value)
+                                    break
+                                elif not minimize and self.agent.problem_ideal[symbol] >= float(value) >= self.agent.problem_nadir[symbol]:
+                                    self.agent.reference_point[symbol] = float(value)
+                                    break
+                                else:
+                                    raise ValueError()
+                        except ValueError:
+                            if minimize:
+                                print(f"Value for reference point component {symbol} not valid!. Please enter a numerical value within range [{self.agent.problem_ideal[symbol]}, {self.agent.problem_nadir[symbol]}], ideal or nadir.")
+                            else:
+                                print(f"Value for reference point component {symbol} not valid!. Please enter a numerical value within range [{self.agent.problem_nadir[symbol]}, {self.agent.problem_ideal[symbol]}], ideal or nadir.")
                 contents = {"reference_point": self.agent.reference_point}
                 msg = Message(
                     to="solver@localhost",
