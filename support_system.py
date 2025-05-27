@@ -1,7 +1,5 @@
 import asyncio
 import json
-import keyboard
-import random
 import re
 import spade
 import string
@@ -17,7 +15,6 @@ from spade.template import Template
 
 from desdeo.explanations import ShapExplainer, generate_biased_mean_data
 from desdeo.mcdm import rpm_solve_solutions
-from desdeo.problem import Problem
 from desdeo.problem.testproblems import pareto_navigator_test_problem
 from desdeo.utopia_stuff.utopia_problem_old import utopia_problem_old
 
@@ -323,14 +320,14 @@ class SHAPAgent(Agent):
         self.add_behaviour(receive_inform_messages, Template(metadata={"performative": "inform"}))
 
 class ExplanationGatherer(Agent):
-    def __init__(self, jid, password, df: pl.DataFrame, port = 5222, verify_security = False, **kwargs):
+    def __init__(self, jid, password, port = 5222, verify_security = False, **kwargs):
         super().__init__(jid, password, port, verify_security, **kwargs)
         self.n_objectives = None
         self.problem = None
         self.problem_name = None
         self.objective_symbols = []
         self.target = None
-        self.df = df
+        #self.df = df
         self.reference_point = None
         self.solution = None
         self.shaps = None
@@ -465,7 +462,7 @@ class ExplanationGatherer(Agent):
             for i in range(self.agent.n_objectives):
                 objective = self.agent.objective_symbols[i]
                 clean_symbol = objective.translate(str.maketrans('', '', string.punctuation))
-                explainer = Explainer(f"explainer{clean_symbol}@localhost", "explainer", objective=objective, df=self.agent.df, problem=self.agent.problem)
+                explainer = Explainer(f"explainer{clean_symbol}@localhost", "explainer", objective=objective, problem=self.agent.problem)
                 await explainer.start(auto_register=True)
             msg = Message(
                 to="preferenceagent@localhost",
@@ -482,10 +479,9 @@ class ExplanationGatherer(Agent):
 
 
 class Explainer(Agent):
-    def __init__(self, jid, password, objective: str, df: pl.DataFrame, problem, port = 5222, verify_security = False, **kwargs):
+    def __init__(self, jid, password, objective: str, problem, port = 5222, verify_security = False, **kwargs):
         super().__init__(jid, password, port, verify_security, **kwargs)
         self.objective = objective
-        self.df = df
         self.problem = problem
         self.objective_symbols = [obj.symbol for obj in problem.objectives]
         self.can_send_examples = False
@@ -635,7 +631,7 @@ async def main(df: pl.DataFrame):
     await preference_agent.start(auto_register=True)
 
     # initialize and start an explanation gatherer
-    explanation_gatherer = ExplanationGatherer("explanationgatherer@localhost", "preference", df=df)
+    explanation_gatherer = ExplanationGatherer("explanationgatherer@localhost", "explanationgatherer")
     await explanation_gatherer.start(auto_register=True)
     #explanation_gatherer.web.start(hostname="127.0.0.1", port="10000")
 
