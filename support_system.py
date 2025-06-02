@@ -3,6 +3,7 @@ import json
 import re
 import spade
 import string
+import tempfile
 
 import numpy as np
 import polars as pl
@@ -15,16 +16,11 @@ from spade.template import Template
 
 from desdeo.explanations import ShapExplainer, generate_biased_mean_data
 from desdeo.mcdm import rpm_solve_solutions
-from desdeo.problem.testproblems import pareto_navigator_test_problem
+from desdeo.problem import Problem
 from desdeo.utopia_stuff.utopia_problem_old import utopia_problem_old
 
 
 shap_model = None
-
-PROBLEM_ENUM = {
-    "utopia_problem_old": utopia_problem_old()[0],
-    "pareto_navigator_test_problem": pareto_navigator_test_problem()
-}
 
 class Solver(Agent):
     def __init__(self, jid, password, solver, port = 5222, verify_security = False):
@@ -71,7 +67,7 @@ class Solver(Agent):
             if msg:
                 contents = json.loads(msg.body)
                 if "problem" in contents:
-                    problem = PROBLEM_ENUM[contents["problem"]]
+                    problem = Problem.load_json(Path(contents["problem"]))
                     print(f"Solver received the problem: {contents["problem"]}.")
                     self.agent.problem = problem
                     if self.agent.reference_point: # assuming we are solving the same problem for which the reference point is given
@@ -91,12 +87,11 @@ class Solver(Agent):
         self.add_behaviour(receiveInformMessages, Template(metadata={"performative": "inform"}))
 
 class PreferenceAgent(Agent):
-    def __init__(self, jid, password, problem_name, max_iterations, port = 5222, verify_security = False):
+    def __init__(self, jid, password, problem: Problem, max_iterations, port = 5222, verify_security = False):
         super().__init__(jid, password, port, verify_security)
         self.can_send_target = False
         self.received_solution = False
-        self.problem = PROBLEM_ENUM[problem_name]
-        self.problem_name = problem_name
+        self.problem = problem
         self.objective_symbols = [obj.symbol for obj in self.problem.objectives]
         self.problem_ideal = self.problem.get_ideal_point()
         self.problem_nadir = self.problem.get_nadir_point()
@@ -181,6 +176,7 @@ class PreferenceAgent(Agent):
 
         async def run(self):
             if self.content_type == "target":
+                # TODO: this is definitely not the way to go about this (input() is blocking), need to figure out how to get user input without blocking the system
                 while True:
                     target = input(f"Provide an objective to improve among {self.agent.objective_symbols}: ")
                     if target in self.agent.objective_symbols:
@@ -199,9 +195,13 @@ class PreferenceAgent(Agent):
             elif self.content_type == "problem":
                 print("Preference agent sending the problem...")
                 #problem_name = input("Provide the problem name: ")
+                # TODO: find a way to keep this open for the duration needed (everyone has stored it) then delete the file
+                # OR: keep it there for the duration of the solution process (when everything ends, delete it)
+                temp = tempfile.NamedTemporaryFile(mode="w+", delete=False)
+                self.agent.problem.save_to_json(Path(temp.name))
                 recipients = ["solver@localhost", "explanationgatherer@localhost"]
                 for recipient in recipients:
-                    contents = {"problem": self.agent.problem_name}
+                    contents = {"problem": temp.name}
                     msg = Message(
                         to=recipient,
                         body=json.dumps(contents),
@@ -308,7 +308,7 @@ class SHAPAgent(Agent):
                     # make this into a request? either way send the SHAPS back to the agent these are from to keep this as little hardcoded as possible
                     self.agent.add_behaviour(self.agent.SendInformMessages(content_type="shaps", receiver=msg.sender.full))
                 elif "problem" in contents:
-                    problem = PROBLEM_ENUM[contents["problem"]]
+                    problem = Problem.load_json(Path(contents["problem"]))
                     print(f"SHAP agent received the problem: {problem.name}")
                     self.agent.problem = problem
                     self.agent.n_objectives = len(problem.objectives)
@@ -420,7 +420,7 @@ class ExplanationGatherer(Agent):
             if msg:
                 contents = json.loads(msg.body)
                 if "problem" in contents:
-                    problem = PROBLEM_ENUM[contents["problem"]]
+                    problem = Problem.load_json(Path(contents["problem"]))
                     print(f"Explanation gatherer received the problem: {problem.name}")
                     self.agent.add_behaviour(self.agent.SendInformMessages(content_type="problem"))
                     self.agent.problem = problem
@@ -500,8 +500,7 @@ class Explainer(Agent):
                 if msg.body == "examples":
                     self.agent.can_send_examples = True
                     if self.agent.ready_to_send_examples:
-                        self.agent.add_behaviour(self.agent.SendExamples())
-                        self.agent.can_send_examples = False
+                        self.agent.add_behaviour(self.agent.SendExamples(receiver=msg.sender.full))
 
     class GenerateExamples(OneShotBehaviour):
         def __init__(self, number_of_examples: int):
@@ -576,6 +575,10 @@ class Explainer(Agent):
             #print(examples)
     
     class SendExamples(OneShotBehaviour):
+        def __init__(self, receiver: str):
+            super().__init__()
+            self.receiver = receiver
+
         async def run(self):
             print(f"{self.agent.jid.username} sending examples...")
             contents = {
@@ -584,7 +587,7 @@ class Explainer(Agent):
             }
             # TODO: should this be sent straight to the preference agent instead?
             msg = Message(
-                to="explanationgatherer@localhost",
+                to=self.receiver,
                 body=json.dumps(contents),
                 metadata={"performative": "inform"}
             )
@@ -592,6 +595,7 @@ class Explainer(Agent):
             print("Examples sent.")
             self.agent.ready_to_send_examples = False
             self.agent.has_new_data = False
+            self.agent.can_send_examples = False
 
     class ReceiveInformMessages(CyclicBehaviour):
         async def run(self):
@@ -607,8 +611,7 @@ class Explainer(Agent):
                     self.agent.has_new_data = True
                     self.agent.add_behaviour(self.agent.GenerateExamples(number_of_examples=5))
                     if self.agent.can_send_examples:
-                        self.agent.add_behaviour(self.agent.SendExamples())
-                        self.agent.can_send_examples = False
+                        self.agent.add_behaviour(self.agent.SendExamples(receiver=msg.sender.full))
 
     async def setup(self):
         print(f"{self.jid.username} started.")
@@ -627,7 +630,7 @@ async def main(df: pl.DataFrame):
     await shap_agent.start(auto_register=True)
 
     # initialize and start a preference agent
-    preference_agent = PreferenceAgent("preferenceagent@localhost", "preferenceagent", problem_name="utopia_problem_old", max_iterations=5)
+    preference_agent = PreferenceAgent("preferenceagent@localhost", "preferenceagent", problem=utopia_problem_old()[0], max_iterations=5)
     await preference_agent.start(auto_register=True)
 
     # initialize and start an explanation gatherer
@@ -644,8 +647,8 @@ async def main(df: pl.DataFrame):
         await explanation_gatherer.stop()
         await preference_agent.stop()
 
-def sample_input_space_to_file(n_samples: int, problem_name: str = None, file_name: str = None):
-    problem = PROBLEM_ENUM[problem_name] if problem_name else PROBLEM_ENUM["utopia_problem_old"]
+def sample_input_space_to_file(n_samples: int, problem: Problem, file_name: str = None):
+    problem = problem
     ideal = problem.get_ideal_point()
     nadir = problem.get_nadir_point()
     n_samples = n_samples
@@ -686,7 +689,7 @@ if __name__ == "__main__":
     # run the multi-agent system with three objectives (i.e., three explainers)
 
     # this seems like something the explanation gatherer should do as soon as it gets the problem
-    #sample_input_space_to_file(n_samples=20, problem_name="utopia_problem_old")
+    #sample_input_space_to_file(n_samples=20, problem=utopia_problem_old()[0])
     
     outputs = []
 
