@@ -3,7 +3,6 @@ import json
 import re
 import spade
 import string
-import tempfile
 
 import numpy as np
 import polars as pl
@@ -67,8 +66,8 @@ class Solver(Agent):
             if msg:
                 contents = json.loads(msg.body)
                 if "problem" in contents:
-                    problem = Problem.load_json(Path(contents["problem"]))
-                    print(f"Solver received the problem: {contents["problem"]}.")
+                    problem = Problem.model_validate_json(contents["problem"])
+                    print(f"Solver received the problem: {problem.name}.")
                     self.agent.problem = problem
                     if self.agent.reference_point: # assuming we are solving the same problem for which the reference point is given
                         self.agent.add_behaviour(self.agent.Solve())
@@ -197,11 +196,13 @@ class PreferenceAgent(Agent):
                 #problem_name = input("Provide the problem name: ")
                 # TODO: find a way to keep this open for the duration needed (everyone has stored it) then delete the file
                 # OR: keep it there for the duration of the solution process (when everything ends, delete it)
-                temp = tempfile.NamedTemporaryFile(mode="w+", delete=False)
-                self.agent.problem.save_to_json(Path(temp.name))
+                # TODO: Maybe not even store it in a file? There really should be a way to do this as a JSON object all the way
+                #temp = tempfile.NamedTemporaryFile(mode="w+", delete=False)
+                #self.agent.problem.save_to_json(Path(temp.name))
+                problem_json = self.agent.problem.model_dump_json(indent=4)
                 recipients = ["solver@localhost", "explanationgatherer@localhost"]
                 for recipient in recipients:
-                    contents = {"problem": temp.name}
+                    contents = {"problem": problem_json}
                     msg = Message(
                         to=recipient,
                         body=json.dumps(contents),
@@ -308,7 +309,7 @@ class SHAPAgent(Agent):
                     # make this into a request? either way send the SHAPS back to the agent these are from to keep this as little hardcoded as possible
                     self.agent.add_behaviour(self.agent.SendInformMessages(content_type="shaps", receiver=msg.sender.full))
                 elif "problem" in contents:
-                    problem = Problem.load_json(Path(contents["problem"]))
+                    problem = Problem.model_validate_json(contents["problem"])
                     print(f"SHAP agent received the problem: {problem.name}")
                     self.agent.problem = problem
                     self.agent.n_objectives = len(problem.objectives)
@@ -420,7 +421,7 @@ class ExplanationGatherer(Agent):
             if msg:
                 contents = json.loads(msg.body)
                 if "problem" in contents:
-                    problem = Problem.load_json(Path(contents["problem"]))
+                    problem = Problem.model_validate_json(contents["problem"])
                     print(f"Explanation gatherer received the problem: {problem.name}")
                     self.agent.add_behaviour(self.agent.SendInformMessages(content_type="problem"))
                     self.agent.problem = problem
