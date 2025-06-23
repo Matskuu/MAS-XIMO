@@ -86,7 +86,7 @@ class Solver(Agent):
         self.add_behaviour(receiveInformMessages, Template(metadata={"performative": "inform"}))
 
 class PreferenceAgent(Agent):
-    def __init__(self, jid, password, problem: Problem, max_iterations, port = 5222, verify_security = False):
+    def __init__(self, jid, password, problem: Problem, port = 5222, verify_security = False):
         super().__init__(jid, password, port, verify_security)
         self.can_send_target = False
         self.received_solution = False
@@ -96,8 +96,6 @@ class PreferenceAgent(Agent):
         self.problem_nadir = self.problem.get_nadir_point()
         self.reference_point = {}
         self.solution = None
-        self.iteration = 0
-        self.max_iterations = max_iterations
         self.explanation = None
         self.examples = None
 
@@ -112,9 +110,9 @@ class PreferenceAgent(Agent):
                 #print(objective_to_improve, objective_to_impair, amount_to_impair)
                 # because the problem is maximization, when this is not known it should be checked
                 new_reference_point = self.agent.solution.copy()
-                amount_to_improve = (self.agent.problem.get_ideal_point()[objective_to_improve] - self.agent.solution[objective_to_improve]) / 2
+                amount_to_improve = (self.agent.problem_ideal[objective_to_improve] - self.agent.solution[objective_to_improve]) / 2
                 if objective_to_impair != "None":
-                    amount_to_impair = (self.agent.solution[objective_to_impair] - self.agent.problem.get_nadir_point()[objective_to_impair]) / 2
+                    amount_to_impair = (self.agent.solution[objective_to_impair] - self.agent.problem_nadir[objective_to_impair]) / 2
                     new_reference_point[objective_to_impair] = new_reference_point[objective_to_impair] - amount_to_impair
                 new_reference_point[objective_to_improve] = new_reference_point[objective_to_improve] + amount_to_improve
                 #print(f"New reference point: {new_reference_point}")
@@ -139,10 +137,6 @@ class PreferenceAgent(Agent):
                 elif "solution" in contents:
                     self.agent.received_solution = True
                     self.agent.solution = contents["solution"]
-                    if self.agent.iteration >= self.agent.max_iterations:
-                        print("Preference agent has reached its preset max number of iterations. Ending the solution process.")
-                        print(f"{self.agent.solution} was chosen as the final solution.")
-                        return
                     if self.agent.can_send_target:
                         self.agent.add_behaviour(self.agent.SendData(content_type="target"))
                         self.agent.received_solution = False
@@ -151,10 +145,13 @@ class PreferenceAgent(Agent):
                     self.agent.explanation = contents["explanation"]
                     self.agent.examples = contents["examples"]
                     print(self.agent.explanation)
+                    print(f"Original solution: {self.agent.solution}")
                     print("-----------------------------------------")
-                    for pair in contents["examples"]:
-                        print(f"Reference point: {pair[0]}")
-                        print(f"Solution: {pair[1]}")
+                    for reference_point, solution in contents["examples"]:
+                        print(f"Reference point: {reference_point}")
+                        print(f"Solution: {solution}")
+                        for symbol in solution:
+                            print(f"{self.agent.problem.get_objective(symbol).name}: {solution[symbol]}")
                         print("-----------------------------------------")
                     self.agent.add_behaviour(self.agent.SendData("reference point"))
 
@@ -194,11 +191,6 @@ class PreferenceAgent(Agent):
             elif self.content_type == "problem":
                 print("Preference agent sending the problem...")
                 #problem_name = input("Provide the problem name: ")
-                # TODO: find a way to keep this open for the duration needed (everyone has stored it) then delete the file
-                # OR: keep it there for the duration of the solution process (when everything ends, delete it)
-                # TODO: Maybe not even store it in a file? There really should be a way to do this as a JSON object all the way
-                #temp = tempfile.NamedTemporaryFile(mode="w+", delete=False)
-                #self.agent.problem.save_to_json(Path(temp.name))
                 problem_json = self.agent.problem.model_dump_json(indent=4)
                 recipients = ["solver@localhost", "explanationgatherer@localhost"]
                 for recipient in recipients:
@@ -212,15 +204,15 @@ class PreferenceAgent(Agent):
                 print(f"The problem sent: {self.agent.problem.name}.")
             elif self.content_type == "reference point":
                 for symbol in self.agent.objective_symbols:
-                    minimize = False
-                    if self.agent.problem_ideal[symbol] < self.agent.problem_nadir[symbol]:
-                        minimize = True
+                    objective = self.agent.problem.get_objective(symbol)
+                    maximize = objective.maximize
+                    if maximize:
+                        range = [self.agent.problem_nadir[symbol], self.agent.problem_ideal[symbol]]
+                    else:
+                        range = [self.agent.problem_ideal[symbol], self.agent.problem_nadir[symbol]]
                     while True:
                         try:
-                            if minimize:
-                                value = input(f"Provide a value for objective {symbol} within range [{self.agent.problem_ideal[symbol]}, {self.agent.problem_nadir[symbol]}]: ")
-                            else:
-                                value = input(f"Provide a value for objective {symbol} within range [{self.agent.problem_nadir[symbol]}, {self.agent.problem_ideal[symbol]}]: ")
+                            value = input(f"Provide a value for objective {symbol} ({objective.name}) within range {range}: ")
                             if value == "ideal":
                                 self.agent.reference_point[symbol] = self.agent.problem_ideal[symbol]
                                 break
@@ -228,22 +220,16 @@ class PreferenceAgent(Agent):
                                 self.agent.reference_point[symbol] = self.agent.problem_nadir[symbol]
                                 break
                             else:
-                                minimize = False
-                                if self.agent.problem_ideal[symbol] < self.agent.problem_nadir[symbol]:
-                                    minimize = True
-                                if minimize and self.agent.problem_ideal[symbol] <= float(value) <= self.agent.problem_nadir[symbol]:
+                                if not maximize and self.agent.problem_ideal[symbol] <= float(value) <= self.agent.problem_nadir[symbol]:
                                     self.agent.reference_point[symbol] = float(value)
                                     break
-                                elif not minimize and self.agent.problem_ideal[symbol] >= float(value) >= self.agent.problem_nadir[symbol]:
+                                elif maximize and self.agent.problem_ideal[symbol] >= float(value) >= self.agent.problem_nadir[symbol]:
                                     self.agent.reference_point[symbol] = float(value)
                                     break
                                 else:
                                     raise ValueError()
                         except ValueError:
-                            if minimize:
-                                print(f"Value for reference point component {symbol} not valid!. Please enter a numerical value within range [{self.agent.problem_ideal[symbol]}, {self.agent.problem_nadir[symbol]}], ideal or nadir.")
-                            else:
-                                print(f"Value for reference point component {symbol} not valid!. Please enter a numerical value within range [{self.agent.problem_nadir[symbol]}, {self.agent.problem_ideal[symbol]}], ideal or nadir.")
+                            print(f"Value for reference point component {symbol} not valid!. Please enter a numerical value within range {range}, ideal or nadir.")
                 contents = {"reference_point": self.agent.reference_point}
                 msg = Message(
                     to="solver@localhost",
@@ -253,7 +239,6 @@ class PreferenceAgent(Agent):
                 print("Preference agent sending a reference point...")
                 await self.send(msg)
                 print(f"A reference point sent: {self.agent.reference_point}.")
-                self.agent.iteration = self.agent.iteration + 1
     
     async def setup(self):
         print("Preference agent started.")
@@ -328,7 +313,6 @@ class ExplanationGatherer(Agent):
         self.problem_name = None
         self.objective_symbols = []
         self.target = None
-        #self.df = df
         self.reference_point = None
         self.solution = None
         self.shaps = None
@@ -480,11 +464,13 @@ class ExplanationGatherer(Agent):
 
 
 class Explainer(Agent):
-    def __init__(self, jid, password, objective: str, problem, port = 5222, verify_security = False, **kwargs):
+    def __init__(self, jid, password, objective: str, problem: Problem, port = 5222, verify_security = False, **kwargs):
         super().__init__(jid, password, port, verify_security, **kwargs)
         self.objective = objective
         self.problem = problem
         self.objective_symbols = [obj.symbol for obj in problem.objectives]
+        self.problem_ideal = self.problem.get_ideal_point()
+        self.problem_nadir = self.problem.get_nadir_point()
         self.can_send_examples = False
         self.has_new_data = False
         self.ready_to_send_examples = False
@@ -503,6 +489,7 @@ class Explainer(Agent):
                     if self.agent.ready_to_send_examples:
                         self.agent.add_behaviour(self.agent.SendExamples(receiver=msg.sender.full))
 
+    # TODO: separate these into two behaviours?
     class GenerateExamples(OneShotBehaviour):
         def __init__(self, number_of_examples: int):
             super().__init__()
@@ -510,7 +497,6 @@ class Explainer(Agent):
 
         async def run(self):
             shaps = self.agent.shaps
-            # TODO: make these problem specific
             shaps_dict = {}
             if len(shaps) == len(self.agent.objective_symbols):
                 shaps_dict = {
@@ -556,10 +542,10 @@ class Explainer(Agent):
             i = 1
             while len(examples) < self.number_of_examples and i < max_iterations:
                 new_reference_point = self.agent.solution.copy()
-                amount_to_improve = (self.agent.problem.get_ideal_point()[to_improve] - self.agent.solution[to_improve]) / (10/(i+1))
+                amount_to_improve = (self.agent.problem_ideal[to_improve] - self.agent.solution[to_improve]) / (10/(i+1))
                 new_reference_point[to_improve] = new_reference_point[to_improve] + amount_to_improve
                 if to_impair:
-                    amount_to_impair = (self.agent.solution[to_impair] - self.agent.problem.get_nadir_point()[to_impair]) / (10/(i+1))
+                    amount_to_impair = (self.agent.solution[to_impair] - self.agent.problem_nadir[to_impair]) / (10/(i+1))
                     new_reference_point[to_impair] = new_reference_point[to_impair] - amount_to_impair
                 solution = rpm_solve_solutions(self.agent.problem, new_reference_point)[0].optimal_objectives
                 unique = True
@@ -631,7 +617,7 @@ async def main(df: pl.DataFrame):
     await shap_agent.start(auto_register=True)
 
     # initialize and start a preference agent
-    preference_agent = PreferenceAgent("preferenceagent@localhost", "preferenceagent", problem=utopia_problem_old()[0], max_iterations=5)
+    preference_agent = PreferenceAgent("preferenceagent@localhost", "preferenceagent", problem=utopia_problem_old()[0])
     await preference_agent.start(auto_register=True)
 
     # initialize and start an explanation gatherer
