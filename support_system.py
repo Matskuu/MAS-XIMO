@@ -19,8 +19,6 @@ from desdeo.problem import Problem
 from desdeo.utopia_stuff.utopia_problem_old import utopia_problem_old
 
 
-shap_model = None
-
 class Solver(Agent):
     def __init__(self, jid, password, solver, port = 5222, verify_security = False):
         super().__init__(jid, password, port, verify_security)
@@ -170,11 +168,18 @@ class PreferenceAgent(Agent):
             super().__init__()
             self.content_type = content_type
 
+        async def get_input(self, prompt):
+            print(prompt, end='', flush=True)
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, input)
+
         async def run(self):
             if self.content_type == "target":
-                # TODO: this is definitely not the way to go about this (input() is blocking), need to figure out how to get user input without blocking the system
                 while True:
-                    target = input(f"Provide an objective to improve among {self.agent.objective_symbols}: ")
+                    #target = input(f"Provide an objective to improve among {self.agent.objective_symbols}: ")
+                    # This is not blocking but also the prompt goes away because of the other prints
+                    # In other words, get rid of the console prints and this solution works fine from the console
+                    target = await self.get_input(f"Provide an objective to improve among {self.agent.objective_symbols}: ")
                     if target in self.agent.objective_symbols:
                         break
                     else:
@@ -212,7 +217,8 @@ class PreferenceAgent(Agent):
                         range = [self.agent.problem_ideal[symbol], self.agent.problem_nadir[symbol]]
                     while True:
                         try:
-                            value = input(f"Provide a value for objective {symbol} ({objective.name}) within range {range}: ")
+                            #value = input(f"Provide a value for objective {symbol} ({objective.name}) within range {range}: ")
+                            value = await self.get_input(f"Provide a value for objective {symbol} ({objective.name}) within range {range}: ")
                             if value == "ideal":
                                 self.agent.reference_point[symbol] = self.agent.problem_ideal[symbol]
                                 break
@@ -248,11 +254,13 @@ class PreferenceAgent(Agent):
         self.add_behaviour(receive_requests, Template(metadata={"performative": "request"}))
 
 class SHAPAgent(Agent):
-    def __init__(self, jid, password, df: pl.DataFrame, port = 5222, verify_security = False):
+    def __init__(self, jid, password, sample_file: str = None, port = 5222, verify_security = False):
         super().__init__(jid, password, port, verify_security)
         self.reference_point = None
         self.solution = None
-        self.df = df
+        self.df = None
+        self.sample_file = sample_file
+        self.shap_model = None
         self.shaps = None
         self.problem = None
         self.objective_symbols = None
@@ -272,12 +280,50 @@ class SHAPAgent(Agent):
                 )
                 await self.send(msg)
 
+    class SampleReferenceSpace(OneShotBehaviour):
+        async def run(self):
+            problem = self.agent.problem
+            ideal = problem.get_ideal_point()
+            nadir = problem.get_nadir_point()
+            # TODO: make this an argument
+            n_samples = 20
+
+            obj_symbols = [obj.symbol for obj in problem.objectives]
+
+            bounds = {
+                symbol: (nadir[symbol], ideal[symbol])
+                for symbol in obj_symbols
+            }
+
+            inputs = {
+                key: np.random.uniform(low, high, size=n_samples)
+                for key, (low, high) in bounds.items()
+            }
+
+            input_dicts = [
+                {key: inputs[key][i] for key in bounds}
+                for i in range(n_samples)
+            ]
+
+            outputs = []
+
+            for i in input_dicts:
+                d = rpm_solve_solutions(problem, i)[0].optimal_objectives
+                for key, value in i.items():
+                    d[key.replace("f", "z")] = value
+                outputs.append(d)
+            
+            self.agent.df = pl.DataFrame(outputs)
+
+            self.agent.shap_model = ShapExplainer(problem_data=self.agent.df, input_symbols=["z_1", "z_2", "z_3"], output_symbols=["f_1", "f_2", "f_3"])
+
     class GenerateSHAPs(OneShotBehaviour):
         async def run(self):
             target = [value for _, value in self.agent.reference_point.items()]
+            # TODO: this solver should also be given as an argument, maybe pair it with the problem?
             background_subset = generate_biased_mean_data(self.agent.df[["f_1", "f_2", "f_3"]].to_numpy(), target, solver="GUROBI")
-            shap_model.setup(background_data=pl.DataFrame(self.agent.df[background_subset]))
-            self.agent.shaps = shap_model.explain_input(pl.DataFrame({"z_1": target[0], "z_2": target[1], "z_3": target[2]})).values[0].T
+            self.agent.shap_model.setup(background_data=pl.DataFrame(self.agent.df[background_subset]))
+            self.agent.shaps = self.agent.shap_model.explain_input(pl.DataFrame({"z_1": target[0], "z_2": target[1], "z_3": target[2]})).values[0].T
 
     class ReceiveInformMessages(CyclicBehaviour):
         async def run(self):
@@ -299,11 +345,20 @@ class SHAPAgent(Agent):
                     self.agent.problem = problem
                     self.agent.n_objectives = len(problem.objectives)
                     self.agent.objective_symbols = [obj.symbol for obj in problem.objectives]
+                    if self.agent.sample_file:
+                        outputs = []
+                        with Path.open("sample.json", "r") as file:
+                            outputs = json.load(file)
+                        self.agent.df = pl.DataFrame(outputs)
+                        self.agent.shap_model = ShapExplainer(problem_data=self.agent.df, input_symbols=["z_1", "z_2", "z_3"], output_symbols=["f_1", "f_2", "f_3"])
+                    else:
+                        self.agent.add_behaviour(self.agent.SampleReferenceSpace())
+                    
 
     async def setup(self):
-        print("SHAP agent started.")
         receive_inform_messages = self.ReceiveInformMessages()
         self.add_behaviour(receive_inform_messages, Template(metadata={"performative": "inform"}))
+        print("SHAP agent started.")
 
 class ExplanationGatherer(Agent):
     def __init__(self, jid, password, port = 5222, verify_security = False, **kwargs):
@@ -607,13 +662,13 @@ class Explainer(Agent):
         receiveRequests = self.ReceiveRequests()
         self.add_behaviour(receiveRequests, Template(metadata={"performative": "request"}))
 
-async def main(df: pl.DataFrame):
+async def main():
     # initialize and start the solver
     solver_agent = Solver("solver@localhost", "solver", solver=rpm_solve_solutions)
     await solver_agent.start(auto_register=True)
 
     # initialize and start a SHAP agent
-    shap_agent = SHAPAgent("shapagent@localhost", "shapagent", df=df)
+    shap_agent = SHAPAgent("shapagent@localhost", "shapagent", sample_file="sample.json")
     await shap_agent.start(auto_register=True)
 
     # initialize and start a preference agent
@@ -634,57 +689,5 @@ async def main(df: pl.DataFrame):
         await explanation_gatherer.stop()
         await preference_agent.stop()
 
-def sample_input_space_to_file(n_samples: int, problem: Problem, file_name: str = None):
-    problem = problem
-    ideal = problem.get_ideal_point()
-    nadir = problem.get_nadir_point()
-    n_samples = n_samples
-
-    obj_symbols = [obj.symbol for obj in problem.objectives]
-
-    bounds = {
-        symbol: (nadir[symbol], ideal[symbol])
-        for symbol in obj_symbols
-    }
-
-    inputs = {
-        key: np.random.uniform(low, high, size=n_samples)
-        for key, (low, high) in bounds.items()
-    }
-
-    input_dicts = [
-        {key: inputs[key][i] for key in bounds}
-        for i in range(n_samples)
-    ]
-
-    outputs = []
-
-    for i in input_dicts:
-        d = rpm_solve_solutions(problem, i)[0].optimal_objectives
-        for key, value in i.items():
-            d[key.replace("f", "z")] = value
-        outputs.append(d)
-
-    if file_name:
-        with Path.open(f"{file_name}.json", "w") as file:
-            json.dump(outputs, file)
-    else:
-        with Path.open("sample.json", "w") as file:
-            json.dump(outputs, file)
-
 if __name__ == "__main__":
-    # run the multi-agent system with three objectives (i.e., three explainers)
-
-    # this seems like something the explanation gatherer should do as soon as it gets the problem
-    #sample_input_space_to_file(n_samples=20, problem=utopia_problem_old()[0])
-    
-    outputs = []
-
-    with Path.open("sample.json", "r") as file:
-        outputs = json.load(file)
-
-    df = pl.DataFrame(outputs)
-
-    shap_model = ShapExplainer(problem_data=df, input_symbols=["z_1", "z_2", "z_3"], output_symbols=["f_1", "f_2", "f_3"])
-
-    spade.run(main(df=df))
+    spade.run(main())
