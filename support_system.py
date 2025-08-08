@@ -29,7 +29,7 @@ class Solver(Agent):
 
     class SendSolution(OneShotBehaviour):
         async def run(self):
-            print("Solver sending a solution...")
+            #print("Solver sending a solution...")
             contents = {
                 "solution": self.agent.solution,
                 "reference_point": self.agent.reference_point
@@ -40,7 +40,7 @@ class Solver(Agent):
                 metadata={"performative": "inform"}
             )
             await self.send(msg)
-            print(f"Solution and reference point sent to explanation gatherer: {contents}")
+            #print(f"Solution and reference point sent to explanation gatherer: {contents}")
             
             contents = {"solution": self.agent.solution}
             msg = Message(
@@ -49,11 +49,11 @@ class Solver(Agent):
                 metadata={"performative": "inform"}
             )
             await self.send(msg)
-            print(f"Solution sent to preference agent: {self.agent.solution}")
+            #print(f"Solution sent to preference agent: {self.agent.solution}")
 
     class Solve(OneShotBehaviour):
         async def run(self):
-            print("Solver solving the problem...")
+            #print("Solver solving the problem...")
             self.agent.solution = self.agent.solver(self.agent.problem, self.agent.reference_point)[0].optimal_objectives # rpm returns a list of two things
             self.agent.add_behaviour(self.agent.SendSolution())
 
@@ -65,13 +65,13 @@ class Solver(Agent):
                 contents = json.loads(msg.body)
                 if "problem" in contents:
                     problem = Problem.model_validate_json(contents["problem"])
-                    print(f"Solver received the problem: {problem.name}.")
+                    #print(f"Solver received the problem: {problem.name}.")
                     self.agent.problem = problem
                     if self.agent.reference_point: # assuming we are solving the same problem for which the reference point is given
                         self.agent.add_behaviour(self.agent.Solve())
                     # TODO: maybe request for a reference point as well once the problem is received?
                 if "reference_point" in contents:
-                    print(f"Solver received reference point: {contents["reference_point"]}.")
+                    #print(f"Solver received reference point: {contents["reference_point"]}.")
                     self.agent.reference_point = contents["reference_point"]
                     if self.agent.problem:
                         self.agent.add_behaviour(self.agent.Solve())
@@ -96,6 +96,8 @@ class PreferenceAgent(Agent):
         self.solution = None
         self.explanation = None
         self.examples = None
+        self.target = None
+        self.explanation_type = None
 
     class ReceiveInformMessages(CyclicBehaviour):
         def get_updated_reference_point(self, explanation: str, previous_reference_point):
@@ -142,15 +144,19 @@ class PreferenceAgent(Agent):
                     print("Preference agent received an explanation.")
                     self.agent.explanation = contents["explanation"]
                     self.agent.examples = contents["examples"]
-                    print(self.agent.explanation)
-                    print(f"Original solution: {self.agent.solution}")
-                    print("-----------------------------------------")
-                    for reference_point, solution in contents["examples"]:
-                        print(f"Reference point: {reference_point}")
-                        print(f"Solution: {solution}")
-                        for symbol in solution:
-                            print(f"{self.agent.problem.get_objective(symbol).name}: {solution[symbol]}")
+                    if self.agent.explanation_type == "0":
+                        print(self.agent.explanation)
+                        print(f"Original solution: {self.agent.solution}")
+                    elif self.agent.explanation_type == "1":
+                        print(self.agent.explanation)
+                        print(f"Original solution: {self.agent.solution}")
                         print("-----------------------------------------")
+                        for reference_point, solution in contents["examples"]:
+                            print(f"Reference point: {reference_point}")
+                            print(f"Solution: {solution}")
+                            for symbol in solution:
+                                print(f"{self.agent.problem.get_objective(symbol).name}: {solution[symbol]}")
+                            print("-----------------------------------------")
                     self.agent.add_behaviour(self.agent.SendData("reference point"))
 
     class ReceiveRequests(CyclicBehaviour):
@@ -184,17 +190,26 @@ class PreferenceAgent(Agent):
                         break
                     else:
                         print(f"Target not valid. Please enter one of the objectives: {self.agent.objective_symbols}.")
+                self.agent.target = target
                 contents = {"target": target}
+                while True:
+                    explanation_type = await self.get_input("What type of explanation would you like (0 = R-XIMO suggestion, 1 = R-XIMO suggestion + examples)? ")
+                    if explanation_type == "0" or "1":
+                        break
+                    else:
+                        print("Invalid input.")
+                self.agent.explanation_type = explanation_type
+                contents["explanation type"] = explanation_type
                 msg = Message(
                     to="explanationgatherer@localhost",
                     body=json.dumps(contents),
                     metadata={"performative": "inform"}
                 )
-                print("Preference agent sending the target...")
+                #print("Preference agent sending the target...")
                 await self.send(msg)
                 print(f"Target sent: {target}.")
             elif self.content_type == "problem":
-                print("Preference agent sending the problem...")
+                #print("Preference agent sending the problem...")
                 #problem_name = input("Provide the problem name: ")
                 problem_json = self.agent.problem.model_dump_json(indent=4)
                 recipients = ["solver@localhost", "explanationgatherer@localhost"]
@@ -206,7 +221,7 @@ class PreferenceAgent(Agent):
                         metadata={"performative": "inform"}
                     )
                     await self.send(msg)
-                print(f"The problem sent: {self.agent.problem.name}.")
+                #print(f"The problem sent: {self.agent.problem.name}.")
             elif self.content_type == "reference point":
                 for symbol in self.agent.objective_symbols:
                     objective = self.agent.problem.get_objective(symbol)
@@ -242,9 +257,9 @@ class PreferenceAgent(Agent):
                     body=json.dumps(contents),
                     metadata={"performative": "inform"}
                 )
-                print("Preference agent sending a reference point...")
+                #print("Preference agent sending a reference point...")
                 await self.send(msg)
-                print(f"A reference point sent: {self.agent.reference_point}.")
+                #print(f"A reference point sent: {self.agent.reference_point}.")
     
     async def setup(self):
         print("Preference agent started.")
@@ -308,6 +323,7 @@ class SHAPAgent(Agent):
             outputs = []
 
             for i in input_dicts:
+                # TODO: allow other solvers/interactive methods?
                 d = rpm_solve_solutions(problem, i)[0].optimal_objectives
                 for key, value in i.items():
                     d[key.replace("f", "z")] = value
@@ -331,7 +347,7 @@ class SHAPAgent(Agent):
             if msg:
                 contents = json.loads(msg.body)
                 if "reference_point" and "solution" in contents:
-                    print(f"SHAP agent received a solution and reference point: {contents}")
+                    #print(f"SHAP agent received a solution and reference point: {contents}")
                     self.agent.reference_point = contents["reference_point"]
                     self.agent.solution = contents["solution"]
                     generate_shaps = self.agent.GenerateSHAPs()
@@ -341,7 +357,7 @@ class SHAPAgent(Agent):
                     self.agent.add_behaviour(self.agent.SendInformMessages(content_type="shaps", receiver=msg.sender.full))
                 elif "problem" in contents:
                     problem = Problem.model_validate_json(contents["problem"])
-                    print(f"SHAP agent received the problem: {problem.name}")
+                    #print(f"SHAP agent received the problem: {problem.name}")
                     self.agent.problem = problem
                     self.agent.n_objectives = len(problem.objectives)
                     self.agent.objective_symbols = [obj.symbol for obj in problem.objectives]
@@ -368,6 +384,7 @@ class ExplanationGatherer(Agent):
         self.problem_name = None
         self.objective_symbols = []
         self.target = None
+        self.explanation_type = None
         self.reference_point = None
         self.solution = None
         self.shaps = None
@@ -434,7 +451,7 @@ class ExplanationGatherer(Agent):
             self.request_content = request_content
 
         async def run(self):
-            print(f"Explanation gatherer sending a request for {self.request_content}...")
+            #print(f"Explanation gatherer sending a request for {self.request_content}...")
             if self.request_content == "problem":
                 msg = Message(
                     to = "preferenceagent@localhost",
@@ -442,7 +459,7 @@ class ExplanationGatherer(Agent):
                     metadata={"performative": "request"}
                 )
                 await self.send(msg)
-                print("Explanation gatherer requested the problem.")
+                #print("Explanation gatherer requested the problem.")
             elif self.request_content == "examples":
                 clean_symbol = self.agent.target.translate(str.maketrans('', '', string.punctuation))
                 msg = Message(
@@ -451,7 +468,7 @@ class ExplanationGatherer(Agent):
                     metadata={"performative": "request"}
                 )
                 await self.send(msg)
-                print("Explanation gatherer requested examples from the target explainer.")
+                #print("Explanation gatherer requested examples from the target explainer.")
     
     class ReceiveInformMessages(CyclicBehaviour):
         async def run(self):
@@ -461,19 +478,22 @@ class ExplanationGatherer(Agent):
                 contents = json.loads(msg.body)
                 if "problem" in contents:
                     problem = Problem.model_validate_json(contents["problem"])
-                    print(f"Explanation gatherer received the problem: {problem.name}")
+                    #print(f"Explanation gatherer received the problem: {problem.name}")
                     self.agent.add_behaviour(self.agent.SendInformMessages(content_type="problem"))
                     self.agent.problem = problem
                     self.agent.problem_name = contents["problem"]
                     self.agent.n_objectives = len(problem.objectives)
                     self.agent.objective_symbols = [obj.symbol for obj in problem.objectives]
                     self.agent.add_behaviour(self.agent.CreateExplainers())
-                elif "target" in contents:
-                    print(f"Explanation gatherer received the target: {contents["target"]}")
+                elif "target" and "explanation type" in contents:
+                    #print(f"Explanation gatherer received the target: {contents["target"]}")
                     self.agent.target = contents["target"]
+                    self.agent.explanation_type = contents["explanation type"]
                     self.agent.add_behaviour(self.agent.SendRequests(request_content="examples"))
                 elif "reference_point" and "solution" in contents:
-                    print(f"Explanation gatherer received a solution and reference point: {contents}")
+                    # TODO: separate these and have preference agent only coordinating with explanation gatherer
+                    #print(f"Explanation gatherer received a solution and reference point: {contents}")
+                    print(f"Solution found based on the reference point: {contents["solution"]}")
                     self.agent.reference_point = contents["reference_point"]
                     self.agent.solution = contents["solution"]
                     self.agent.add_behaviour(self.agent.SendInformMessages(content_type="solution"))
@@ -481,7 +501,7 @@ class ExplanationGatherer(Agent):
                     if self.agent.received_shaps:
                         self.agent.add_behaviour(self.agent.SendInformMessages(content_type="shaps"))
                 elif "shaps" in contents:
-                    print("Explanation gatherer received SHAPs.")
+                    #print("Explanation gatherer received SHAPs.")
                     self.agent.shaps = contents["shaps"]
                     self.agent.received_shaps = True
                     if self.agent.received_solution:
@@ -498,7 +518,7 @@ class ExplanationGatherer(Agent):
 
     class CreateExplainers(OneShotBehaviour):
         async def run(self):
-            print(f"Explanation gatherer creating {self.agent.n_objectives} explainers...")
+            #print(f"Explanation gatherer creating {self.agent.n_objectives} explainers...")
             for i in range(self.agent.n_objectives):
                 objective = self.agent.objective_symbols[i]
                 clean_symbol = objective.translate(str.maketrans('', '', string.punctuation))
@@ -597,10 +617,10 @@ class Explainer(Agent):
             i = 1
             while len(examples) < self.number_of_examples and i < max_iterations:
                 new_reference_point = self.agent.solution.copy()
-                amount_to_improve = (self.agent.problem_ideal[to_improve] - self.agent.solution[to_improve]) / (10/(i+1))
+                amount_to_improve = (self.agent.problem_ideal[to_improve] - self.agent.solution[to_improve]) / (10/(i))
                 new_reference_point[to_improve] = new_reference_point[to_improve] + amount_to_improve
                 if to_impair:
-                    amount_to_impair = (self.agent.solution[to_impair] - self.agent.problem_nadir[to_impair]) / (10/(i+1))
+                    amount_to_impair = (self.agent.solution[to_impair] - self.agent.problem_nadir[to_impair]) / (10/(i))
                     new_reference_point[to_impair] = new_reference_point[to_impair] - amount_to_impair
                 solution = rpm_solve_solutions(self.agent.problem, new_reference_point)[0].optimal_objectives
                 unique = True
@@ -613,7 +633,7 @@ class Explainer(Agent):
                 i = i + 1
             self.agent.examples = examples
             self.agent.ready_to_send_examples = True
-            print(f"{self.agent.jid.username} ready to send examples.")
+            #print(f"{self.agent.jid.username} ready to send examples.")
             #print(examples)
     
     class SendExamples(OneShotBehaviour):
@@ -622,7 +642,7 @@ class Explainer(Agent):
             self.receiver = receiver
 
         async def run(self):
-            print(f"{self.agent.jid.username} sending examples...")
+            #print(f"{self.agent.jid.username} sending examples...")
             contents = {
                 "explanation": self.agent.explanation,
                 "examples": self.agent.examples
@@ -634,7 +654,7 @@ class Explainer(Agent):
                 metadata={"performative": "inform"}
             )
             await self.send(msg)
-            print("Examples sent.")
+            #print("Examples sent.")
             self.agent.ready_to_send_examples = False
             self.agent.has_new_data = False
             self.agent.can_send_examples = False
