@@ -123,6 +123,7 @@ class PreferenceAgent(Agent):
                             print("Invalid input.")
                     self.agent.explanation_type = explanation_type
                     self.agent.add_behaviour(self.agent.ShowDifferentExplanations())
+                    break
                 else:
                     print("Option not valid.")
 
