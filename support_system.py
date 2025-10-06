@@ -1,3 +1,8 @@
+"""A multi-agent system version in which the explainers know which interactive method is being used (only RPM atm)
+and use the method to solve the example solutions themselves.
+
+This approach allows for more effective generation of examples as there is no waiting for messages in any diretion during it."""
+
 import asyncio
 import json
 import re
@@ -595,6 +600,7 @@ class Explainer(Agent):
         self.reference_point = None
         self.examples = None
         self.explanation = None
+        self.method = rpm_solve_solutions # TODO: if done this way, make this an argument as well
 
     class ReceiveRequests(CyclicBehaviour):
         async def run(self):
@@ -665,7 +671,8 @@ class Explainer(Agent):
                 if to_impair:
                     amount_to_impair = (self.agent.solution[to_impair] - self.agent.problem_nadir[to_impair]) / (max_iterations/(i))
                     new_reference_point[to_impair] = new_reference_point[to_impair] - amount_to_impair
-                solution = rpm_solve_solutions(self.agent.problem, new_reference_point)[0].optimal_objectives
+                if self.agent.method == rpm_solve_solutions: # TODO: when more methods added, add more ifs
+                    solution = self.agent.method(self.agent.problem, new_reference_point)[0].optimal_objectives
                 unique = True
                 for example in examples:
                     for symbol in self.agent.objective_symbols:
