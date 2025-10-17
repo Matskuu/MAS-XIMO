@@ -24,13 +24,13 @@ from desdeo.mcdm import rpm_solve_solutions
 from desdeo.problem import Problem
 from desdeo.utopia_stuff.utopia_problem_old import utopia_problem_old
 
-#import logging
-
-#logging.basicConfig(filename="mas_log.txt", level=logging.DEBUG)
+from concurrent.futures import ThreadPoolExecutor
 
 import time
 
 file = open("mas_log.txt", mode="w")
+
+executor = ThreadPoolExecutor(max_workers=1)
 
 class Solver(Agent):
     def __init__(self, jid, password, solver, port = 5222, verify_security = False):
@@ -41,15 +41,16 @@ class Solver(Agent):
         self.solver = solver
 
     class SendSolution(OneShotBehaviour):
-        def __init__(self, reference_point, sender: str = None):
+        def __init__(self, reference_point, solution, sender: str = None):
             super().__init__()
             self.sender = sender
             self.reference_point = reference_point
+            self.solution = solution
 
         async def run(self):
             #print("Solver sending a solution...")
             contents = {
-                "solution": self.agent.solution,
+                "solution": self.solution,
                 "reference_point": self.reference_point
             }
             msg = Message(
@@ -73,12 +74,27 @@ class Solver(Agent):
             #print("Solver solving the problem...")
             await asyncio.sleep(0.01)
             file.write(f"Time before solved for {self.reference_point} is {time.time()}\n")
-            self.agent.solution = self.agent.solver(self.agent.problem, self.reference_point)[0].optimal_objectives # rpm returns a list of two things
+            #solution = self.agent.solver(self.agent.problem, self.reference_point)[0].optimal_objectives # rpm returns a list of two things
+            loop = asyncio.get_running_loop()
+            solver = self.agent.solver
+            problem = self.agent.problem.model_copy(deep=True)
+            reference_point = self.reference_point.copy()
+            try:
+                result = await loop.run_in_executor(
+                    executor,
+                    solver,
+                    problem,
+                    reference_point
+                )
+            except RuntimeError as e:
+                print("Caught RuntimeError in executor:", e)
+                return
+            solution = result[0].optimal_objectives
             file.write(f"Time after solved for {self.reference_point} is {time.time()}\n")
             if self.sender:
-                self.agent.add_behaviour(self.agent.SendSolution(sender=self.sender, reference_point=self.reference_point))
+                self.agent.add_behaviour(self.agent.SendSolution(sender=self.sender, reference_point=self.reference_point, solution=solution))
             else:
-                self.agent.add_behaviour(self.agent.SendSolution(reference_point=self.reference_point))
+                self.agent.add_behaviour(self.agent.SendSolution(reference_point=self.reference_point, solution=solution))
 
     class ReceiveInformMessages(CyclicBehaviour):
         async def run(self):
