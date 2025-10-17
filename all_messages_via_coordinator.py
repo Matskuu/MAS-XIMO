@@ -1,8 +1,6 @@
 """A multi-agent system version in which the explainers send the example reference points to the coordinator
 who then sends them to the solver and in return gets the solution that is sent to the correct explainer by the
-coordinator.
-
-This approach is the slowest and may not make sense (not using this would change the architecture a bit though)."""
+coordinator."""
 
 import asyncio
 import json
@@ -26,9 +24,9 @@ from desdeo.utopia_stuff.utopia_problem_old import utopia_problem_old
 
 from concurrent.futures import ThreadPoolExecutor
 
-import time
+#import time
 
-file = open("mas_log.txt", mode="w")
+#file = open("mas_log.txt", mode="w")
 
 executor = ThreadPoolExecutor(max_workers=1)
 
@@ -61,7 +59,7 @@ class Solver(Agent):
             if self.sender:
                 msg.sender = self.sender
             await self.send(msg)
-            file.write(f"Solver sent message {msg} at {time.time()}\n")
+            #file.write(f"Solver sent message {msg} at {time.time()}\n")
             #print(f"Solution and reference point sent to coordinator: {contents}")
 
     class Solve(OneShotBehaviour):
@@ -73,7 +71,7 @@ class Solver(Agent):
         async def run(self):
             #print("Solver solving the problem...")
             await asyncio.sleep(0.01)
-            file.write(f"Time before solved for {self.reference_point} is {time.time()}\n")
+            #file.write(f"Time before solved for {self.reference_point} is {time.time()}\n")
             #solution = self.agent.solver(self.agent.problem, self.reference_point)[0].optimal_objectives # rpm returns a list of two things
             loop = asyncio.get_running_loop()
             solver = self.agent.solver
@@ -90,7 +88,7 @@ class Solver(Agent):
                 print("Caught RuntimeError in executor:", e)
                 return
             solution = result[0].optimal_objectives
-            file.write(f"Time after solved for {self.reference_point} is {time.time()}\n")
+            #file.write(f"Time after solved for {self.reference_point} is {time.time()}\n")
             if self.sender:
                 self.agent.add_behaviour(self.agent.SendSolution(sender=self.sender, reference_point=self.reference_point, solution=solution))
             else:
@@ -113,7 +111,7 @@ class Solver(Agent):
                     #print(f"Solver received reference point: {contents["reference_point"]}.")
                     #self.agent.reference_point = contents["reference_point"]
                     if self.agent.problem:
-                        file.write(f"Solver received message {msg} at {time.time()}\n")
+                        #file.write(f"Solver received message {msg} at {time.time()}\n")
                         self.agent.add_behaviour(self.agent.Solve(sender=msg.sender.full, reference_point=contents["reference_point"]))
                     else:
                         self.agent.add_behaviour(self.agent.SendRequests(request_content="problem"))
@@ -561,7 +559,7 @@ class CoordinatorAgent(Agent):
                     metadata={"performative": "inform"}
                 )
                 await self.send(msg)
-                file.write(f"Coordinator sent message {msg} at {time.time()}\n")
+                #file.write(f"Coordinator sent message {msg} at {time.time()}\n")
             elif self.content_type == "example solution":
                 contents = {
                     "reference_point": self.contents["reference_point"],
@@ -623,7 +621,7 @@ class CoordinatorAgent(Agent):
                     self.agent.add_behaviour(self.agent.SendRequests(request_content="examples"))
                 elif all(key in contents for key in ("reference_point", "solution")):
                     if "explainer" in msg.sender.full:
-                        file.write(f"Coordinator received message {msg} at {time.time()}\n")
+                        #file.write(f"Coordinator received message {msg} at {time.time()}\n")
                         self.agent.add_behaviour(self.agent.SendInformMessages(content_type="example solution", sender=msg.sender.full, contents=contents))
                     else:
                         self.agent.solution = contents["solution"]
@@ -633,7 +631,7 @@ class CoordinatorAgent(Agent):
                             self.agent.add_behaviour(self.agent.SendInformMessages(content_type="shaps"))
                 elif "reference_point" in contents:
                     if "explainer" in msg.sender.full:
-                        file.write(f"Coordinator received message {msg} at {time.time()}\n")
+                        #file.write(f"Coordinator received message {msg} at {time.time()}\n")
                         #print(f"Coordinator received message {msg} at {time.time()}")
                         self.agent.add_behaviour(self.agent.SendInformMessages(content_type="example reference point", sender=msg.sender.full, contents=contents))
                     else:
@@ -768,7 +766,7 @@ class Explainer(Agent):
                     metadata={"performative": "inform"}
                 )
                 await self.send(msg)
-                file.write(f"{self.agent.jid} sent message {msg} at {time.time()}\n")
+                #file.write(f"{self.agent.jid} sent message {msg} at {time.time()}\n")
                 #print(f"{self.agent.jid} sent message {msg} at {time.time()}")
                 """solution = rpm_solve_solutions(self.agent.problem, new_reference_point)[0].optimal_objectives
                 unique = True
@@ -867,7 +865,7 @@ async def main():
         while True:
             await asyncio.sleep(1)
     except KeyboardInterrupt:
-        file.close()
+        #file.close()
         print("Stopping agents...")
         await solver_agent.stop()
         await coordinator_agent.stop()
