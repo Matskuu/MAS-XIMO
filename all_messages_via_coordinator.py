@@ -23,6 +23,7 @@ from desdeo.problem import Problem
 from desdeo.utopia_stuff.utopia_problem_old import utopia_problem_old
 
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 
 #import time
 
@@ -219,6 +220,7 @@ class PreferenceAgent(Agent):
                         self.agent.received_solution = False
                 elif "solution" in contents:
                     print(f"Solution found based on the reference point: {contents["solution"]}")
+                    #file.write(f"Preference agent received solution {contents["solution"]} at {time.time()}\n")
                     self.agent.received_solution = True
                     self.agent.solution = contents["solution"]
                     if self.agent.can_send_target:
@@ -268,23 +270,29 @@ class PreferenceAgent(Agent):
         async def run(self):
             if self.content_type == "target":
                 while True:
+                    await asyncio.sleep(0.01)
+                    #file.write(f"WAITING FOR A TARGET at {time.time()}\n")
                     #target = input(f"Provide an objective to improve among {self.agent.objective_symbols}: ")
                     # This is not blocking but also the prompt goes away because of the other prints
                     # In other words, get rid of the console prints and this solution works fine from the console
-                    target = await self.agent.get_input(f"Provide an objective to improve among {self.agent.objective_symbols}: ")
+                    target = await self.get_input(f"Provide an objective to improve among {self.agent.objective_symbols}: ")
                     if target in self.agent.objective_symbols:
                         break
                     else:
                         print(f"Target not valid. Please enter one of the objectives: {self.agent.objective_symbols}.")
                 self.agent.target = target
                 contents = {"target": target}
+                #file.write(f"TARGET RECEIVED at {time.time()}\n")
                 while True:
-                    explanation_type = await self.agent.get_input("What type of explanation would you like (0 = R-XIMO suggestion, 1 = R-XIMO suggestion + examples)? ")
+                    await asyncio.sleep(0.01)
+                    #file.write(f"WAITING FOR EXPLANATION TYPE at {time.time()}\n")
+                    explanation_type = await self.get_input("What type of explanation would you like (0 = R-XIMO suggestion, 1 = R-XIMO suggestion + examples)? ")
                     if explanation_type == "0" or "1":
                         break
                     else:
                         print("Invalid input.")
                 self.agent.explanation_type = explanation_type
+                #file.write(f"EXPLANATION TYPE RECEIVED at {time.time()}\n")
                 #contents["explanation type"] = explanation_type
                 msg = Message(
                     to="coordinator@localhost",
@@ -293,7 +301,8 @@ class PreferenceAgent(Agent):
                 )
                 #print("Preference agent sending the target...")
                 await self.send(msg)
-                #print(f"Target sent: {target}.")
+                #file.write(f"TARGET SENT AT {time.time()}")
+                #print(f"Target sent: {target} at {time.time()}.")
             elif self.content_type == "problem":
                 #print("Preference agent sending the problem...")
                 #problem_name = input("Provide the problem name: ")
@@ -343,6 +352,7 @@ class PreferenceAgent(Agent):
                 )
                 #print("Preference agent sending a reference point...")
                 await self.send(msg)
+                #file.write(f"Preference agent sent reference point {self.agent.reference_point} at {time.time()}\n")
                 #print(f"A reference point sent: {self.agent.reference_point}.")
     
     async def setup(self):
@@ -418,12 +428,35 @@ class SHAPAgent(Agent):
             self.agent.shap_model = ShapExplainer(problem_data=self.agent.df, input_symbols=["z_1", "z_2", "z_3"], output_symbols=["f_1", "f_2", "f_3"])
 
     class GenerateSHAPs(OneShotBehaviour):
+        def __init__(self, reference_point):
+            super().__init__()
+            self.reference_point = reference_point
+
         async def run(self):
-            target = [value for _, value in self.agent.reference_point.items()]
+            await asyncio.sleep(1)
+            #file.write(f"STARTED TO GENERATE SHAPS AT {time.time()}\n")
+            target = [value for _, value in self.reference_point.items()]
             # TODO: this solver should also be given as an argument, maybe pair it with the problem?
-            background_subset = generate_biased_mean_data(self.agent.df[["f_1", "f_2", "f_3"]].to_numpy(), target, solver="GUROBI")
+            #background_subset = generate_biased_mean_data(self.agent.df[["f_1", "f_2", "f_3"]].to_numpy(), target, solver="GUROBI")
+            loop = asyncio.get_running_loop()
+            data = self.agent.df[["f_1", "f_2", "f_3"]].to_numpy()
+            try:
+                background_subset = await loop.run_in_executor(
+                    executor,
+                    partial(
+                        generate_biased_mean_data,
+                        data,
+                        target,
+                        solver="GUROBI"
+                    )
+                )
+            except RuntimeError as e:
+                print("Caught RuntimeError in executor:", e)
+                return
             self.agent.shap_model.setup(background_data=pl.DataFrame(self.agent.df[background_subset]))
             self.agent.shaps = self.agent.shap_model.explain_input(pl.DataFrame({"z_1": target[0], "z_2": target[1], "z_3": target[2]})).values[0].T
+            #file.write(f"FINISHED GENERATING SHAPS AT {time.time()}\n")
+            self.agent.add_behaviour(self.agent.SendInformMessages(content_type="shaps", receiver="coordinator@localhost"))
 
     class ReceiveInformMessages(CyclicBehaviour):
         async def run(self):
@@ -431,12 +464,11 @@ class SHAPAgent(Agent):
             if msg:
                 contents = json.loads(msg.body)
                 if "reference_point" in contents:
+                    #file.write(f"SHAP agent received reference point {contents["reference_point"]} at {time.time()}\n")
                     self.agent.reference_point = contents["reference_point"]
-                    generate_shaps = self.agent.GenerateSHAPs()
+                    generate_shaps = self.agent.GenerateSHAPs(reference_point=contents["reference_point"])
                     self.agent.add_behaviour(generate_shaps)
-                    await generate_shaps.join() # just making sure the SHAPs are ready to be sent
-                    # make this into a request? either way send the SHAPS back to the agent these are from to keep this as little hardcoded as possible
-                    self.agent.add_behaviour(self.agent.SendInformMessages(content_type="shaps", receiver=msg.sender.full))
+                    #await generate_shaps.join() # just making sure the SHAPs are ready to be sent
                 elif "problem" in contents:
                     problem = Problem.model_validate_json(contents["problem"])
                     #print(f"SHAP agent received the problem: {problem.name}")
@@ -548,6 +580,7 @@ class CoordinatorAgent(Agent):
                         metadata={"performative": "inform"}
                     )
                     await self.send(msg)
+                    #file.write(f"Coordinator sent message {msg} at {time.time()}\n")
             elif self.content_type == "example reference point":
                 contents = {
                     "reference_point": self.contents["reference_point"]
@@ -635,6 +668,7 @@ class CoordinatorAgent(Agent):
                         #print(f"Coordinator received message {msg} at {time.time()}")
                         self.agent.add_behaviour(self.agent.SendInformMessages(content_type="example reference point", sender=msg.sender.full, contents=contents))
                     else:
+                        #file.write(f"Coordinator received message {msg} at {time.time()}\n")
                         self.agent.reference_point = contents["reference_point"]
                         self.agent.add_behaviour(self.agent.SendInformMessages(content_type="reference point"))
                 elif "shaps" in contents:
@@ -768,15 +802,6 @@ class Explainer(Agent):
                 await self.send(msg)
                 #file.write(f"{self.agent.jid} sent message {msg} at {time.time()}\n")
                 #print(f"{self.agent.jid} sent message {msg} at {time.time()}")
-                """solution = rpm_solve_solutions(self.agent.problem, new_reference_point)[0].optimal_objectives
-                unique = True
-                for example in examples:
-                    for symbol in self.agent.objective_symbols:
-                        if np.isclose(solution[symbol], example[1][symbol]):
-                            unique = False
-                            break
-                if (solution[self.agent.objective] > self.agent.solution[self.agent.objective]) and unique:
-                    examples.append((new_reference_point, solution))"""
                 i = i + 1
             #self.agent.ready_to_send_explanations = True
             #print(f"{self.agent.jid.username} ready to send examples.")
