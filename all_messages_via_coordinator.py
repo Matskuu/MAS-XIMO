@@ -21,13 +21,14 @@ from desdeo.explanations import ShapExplainer, generate_biased_mean_data
 from desdeo.mcdm import rpm_solve_solutions
 from desdeo.problem import Problem
 from desdeo.utopia_stuff.utopia_problem_old import utopia_problem_old
+from desdeo.problem.testproblems import simple_linear_test_problem
 
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
-#import time
+import time
 
-#file = open("mas_log.txt", mode="w")
+file = open("mas_log.txt", mode="w")
 
 executor = ThreadPoolExecutor(max_workers=1)
 
@@ -60,7 +61,7 @@ class Solver(Agent):
             if self.sender:
                 msg.sender = self.sender
             await self.send(msg)
-            #file.write(f"Solver sent message {msg} at {time.time()}\n")
+            file.write(f"Solver sent message {msg} at {time.time()}\n")
             #print(f"Solution and reference point sent to coordinator: {contents}")
 
     class Solve(OneShotBehaviour):
@@ -71,8 +72,9 @@ class Solver(Agent):
 
         async def run(self):
             #print("Solver solving the problem...")
+            #print(self.reference_point)
             await asyncio.sleep(0.01)
-            #file.write(f"Time before solved for {self.reference_point} is {time.time()}\n")
+            file.write(f"Time before solved for {self.reference_point} is {time.time()}\n")
             #solution = self.agent.solver(self.agent.problem, self.reference_point)[0].optimal_objectives # rpm returns a list of two things
             loop = asyncio.get_running_loop()
             solver = self.agent.solver
@@ -89,7 +91,7 @@ class Solver(Agent):
                 print("Caught RuntimeError in executor:", e)
                 return
             solution = result[0].optimal_objectives
-            #file.write(f"Time after solved for {self.reference_point} is {time.time()}\n")
+            file.write(f"Time after solved for {self.reference_point} is {time.time()}\n")
             if self.sender:
                 self.agent.add_behaviour(self.agent.SendSolution(sender=self.sender, reference_point=self.reference_point, solution=solution))
             else:
@@ -112,7 +114,7 @@ class Solver(Agent):
                     #print(f"Solver received reference point: {contents["reference_point"]}.")
                     #self.agent.reference_point = contents["reference_point"]
                     if self.agent.problem:
-                        #file.write(f"Solver received message {msg} at {time.time()}\n")
+                        file.write(f"Solver received message {msg} at {time.time()}\n")
                         self.agent.add_behaviour(self.agent.Solve(sender=msg.sender.full, reference_point=contents["reference_point"]))
                     else:
                         self.agent.add_behaviour(self.agent.SendRequests(request_content="problem"))
@@ -220,7 +222,7 @@ class PreferenceAgent(Agent):
                         self.agent.received_solution = False
                 elif "solution" in contents:
                     print(f"Solution found based on the reference point: {contents["solution"]}")
-                    #file.write(f"Preference agent received solution {contents["solution"]} at {time.time()}\n")
+                    file.write(f"Preference agent received solution {contents["solution"]} at {time.time()}\n")
                     self.agent.received_solution = True
                     self.agent.solution = contents["solution"]
                     if self.agent.can_send_target:
@@ -271,7 +273,7 @@ class PreferenceAgent(Agent):
             if self.content_type == "target":
                 while True:
                     await asyncio.sleep(0.01)
-                    #file.write(f"WAITING FOR A TARGET at {time.time()}\n")
+                    file.write(f"WAITING FOR A TARGET at {time.time()}\n")
                     #target = input(f"Provide an objective to improve among {self.agent.objective_symbols}: ")
                     # This is not blocking but also the prompt goes away because of the other prints
                     # In other words, get rid of the console prints and this solution works fine from the console
@@ -282,17 +284,17 @@ class PreferenceAgent(Agent):
                         print(f"Target not valid. Please enter one of the objectives: {self.agent.objective_symbols}.")
                 self.agent.target = target
                 contents = {"target": target}
-                #file.write(f"TARGET RECEIVED at {time.time()}\n")
+                file.write(f"TARGET RECEIVED at {time.time()}\n")
                 while True:
                     await asyncio.sleep(0.01)
-                    #file.write(f"WAITING FOR EXPLANATION TYPE at {time.time()}\n")
+                    file.write(f"WAITING FOR EXPLANATION TYPE at {time.time()}\n")
                     explanation_type = await self.get_input("What type of explanation would you like (0 = R-XIMO suggestion, 1 = R-XIMO suggestion + examples)? ")
                     if explanation_type == "0" or "1":
                         break
                     else:
                         print("Invalid input.")
                 self.agent.explanation_type = explanation_type
-                #file.write(f"EXPLANATION TYPE RECEIVED at {time.time()}\n")
+                file.write(f"EXPLANATION TYPE RECEIVED at {time.time()}\n")
                 #contents["explanation type"] = explanation_type
                 msg = Message(
                     to="coordinator@localhost",
@@ -301,7 +303,7 @@ class PreferenceAgent(Agent):
                 )
                 #print("Preference agent sending the target...")
                 await self.send(msg)
-                #file.write(f"TARGET SENT AT {time.time()}")
+                file.write(f"TARGET SENT AT {time.time()}")
                 #print(f"Target sent: {target} at {time.time()}.")
             elif self.content_type == "problem":
                 #print("Preference agent sending the problem...")
@@ -352,7 +354,7 @@ class PreferenceAgent(Agent):
                 )
                 #print("Preference agent sending a reference point...")
                 await self.send(msg)
-                #file.write(f"Preference agent sent reference point {self.agent.reference_point} at {time.time()}\n")
+                file.write(f"Preference agent sent reference point {self.agent.reference_point} at {time.time()}\n")
                 #print(f"A reference point sent: {self.agent.reference_point}.")
     
     async def setup(self):
@@ -425,7 +427,10 @@ class SHAPAgent(Agent):
             
             self.agent.df = pl.DataFrame(outputs)
 
-            self.agent.shap_model = ShapExplainer(problem_data=self.agent.df, input_symbols=["z_1", "z_2", "z_3"], output_symbols=["f_1", "f_2", "f_3"])
+            fs = [symbol for symbol in self.agent.objective_symbols]
+            zs = [f"z_{i+1}" for i in range(len(self.agent.objective_symbols))]
+
+            self.agent.shap_model = ShapExplainer(problem_data=self.agent.df, input_symbols=zs, output_symbols=fs)
 
     class GenerateSHAPs(OneShotBehaviour):
         def __init__(self, reference_point):
@@ -434,12 +439,14 @@ class SHAPAgent(Agent):
 
         async def run(self):
             await asyncio.sleep(1)
-            #file.write(f"STARTED TO GENERATE SHAPS AT {time.time()}\n")
+            file.write(f"STARTED TO GENERATE SHAPS AT {time.time()}\n")
             target = [value for _, value in self.reference_point.items()]
             # TODO: this solver should also be given as an argument, maybe pair it with the problem?
             #background_subset = generate_biased_mean_data(self.agent.df[["f_1", "f_2", "f_3"]].to_numpy(), target, solver="GUROBI")
             loop = asyncio.get_running_loop()
-            data = self.agent.df[["f_1", "f_2", "f_3"]].to_numpy()
+            fs = [symbol for symbol in self.agent.objective_symbols]
+            zs = [f"z_{i+1}" for i in range(len(self.agent.objective_symbols))]
+            data = self.agent.df[fs].to_numpy()
             try:
                 background_subset = await loop.run_in_executor(
                     executor,
@@ -447,6 +454,8 @@ class SHAPAgent(Agent):
                         generate_biased_mean_data,
                         data,
                         target,
+                        min_size=5,
+                        max_size=20,
                         solver="GUROBI"
                     )
                 )
@@ -454,8 +463,11 @@ class SHAPAgent(Agent):
                 print("Caught RuntimeError in executor:", e)
                 return
             self.agent.shap_model.setup(background_data=pl.DataFrame(self.agent.df[background_subset]))
-            self.agent.shaps = self.agent.shap_model.explain_input(pl.DataFrame({"z_1": target[0], "z_2": target[1], "z_3": target[2]})).values[0].T
-            #file.write(f"FINISHED GENERATING SHAPS AT {time.time()}\n")
+            z_dict = {}
+            for i in range(len(zs)):
+                z_dict[zs[i]] = target[i]
+            self.agent.shaps = self.agent.shap_model.explain_input(pl.DataFrame(z_dict)).values[0].T
+            file.write(f"FINISHED GENERATING SHAPS AT {time.time()}\n")
             self.agent.add_behaviour(self.agent.SendInformMessages(content_type="shaps", receiver="coordinator@localhost"))
 
     class ReceiveInformMessages(CyclicBehaviour):
@@ -464,7 +476,7 @@ class SHAPAgent(Agent):
             if msg:
                 contents = json.loads(msg.body)
                 if "reference_point" in contents:
-                    #file.write(f"SHAP agent received reference point {contents["reference_point"]} at {time.time()}\n")
+                    file.write(f"SHAP agent received reference point {contents["reference_point"]} at {time.time()}\n")
                     self.agent.reference_point = contents["reference_point"]
                     generate_shaps = self.agent.GenerateSHAPs(reference_point=contents["reference_point"])
                     self.agent.add_behaviour(generate_shaps)
@@ -580,7 +592,7 @@ class CoordinatorAgent(Agent):
                         metadata={"performative": "inform"}
                     )
                     await self.send(msg)
-                    #file.write(f"Coordinator sent message {msg} at {time.time()}\n")
+                    file.write(f"Coordinator sent message {msg} at {time.time()}\n")
             elif self.content_type == "example reference point":
                 contents = {
                     "reference_point": self.contents["reference_point"]
@@ -592,7 +604,7 @@ class CoordinatorAgent(Agent):
                     metadata={"performative": "inform"}
                 )
                 await self.send(msg)
-                #file.write(f"Coordinator sent message {msg} at {time.time()}\n")
+                file.write(f"Coordinator sent message {msg} at {time.time()}\n")
             elif self.content_type == "example solution":
                 contents = {
                     "reference_point": self.contents["reference_point"],
@@ -654,7 +666,7 @@ class CoordinatorAgent(Agent):
                     self.agent.add_behaviour(self.agent.SendRequests(request_content="examples"))
                 elif all(key in contents for key in ("reference_point", "solution")):
                     if "explainer" in msg.sender.full:
-                        #file.write(f"Coordinator received message {msg} at {time.time()}\n")
+                        file.write(f"Coordinator received message {msg} at {time.time()}\n")
                         self.agent.add_behaviour(self.agent.SendInformMessages(content_type="example solution", sender=msg.sender.full, contents=contents))
                     else:
                         self.agent.solution = contents["solution"]
@@ -664,11 +676,11 @@ class CoordinatorAgent(Agent):
                             self.agent.add_behaviour(self.agent.SendInformMessages(content_type="shaps"))
                 elif "reference_point" in contents:
                     if "explainer" in msg.sender.full:
-                        #file.write(f"Coordinator received message {msg} at {time.time()}\n")
+                        file.write(f"Coordinator received message {msg} at {time.time()}\n")
                         #print(f"Coordinator received message {msg} at {time.time()}")
                         self.agent.add_behaviour(self.agent.SendInformMessages(content_type="example reference point", sender=msg.sender.full, contents=contents))
                     else:
-                        #file.write(f"Coordinator received message {msg} at {time.time()}\n")
+                        file.write(f"Coordinator received message {msg} at {time.time()}\n")
                         self.agent.reference_point = contents["reference_point"]
                         self.agent.add_behaviour(self.agent.SendInformMessages(content_type="reference point"))
                 elif "shaps" in contents:
@@ -723,6 +735,8 @@ class Explainer(Agent):
         self.example_pairs = []
         self.explanation = None
         self.number_of_examples = 5
+        self.iteration = 1
+        self.max_iterations = 10 # TODO: make this an argument
 
     class ReceiveRequests(CyclicBehaviour):
         async def run(self):
@@ -784,15 +798,21 @@ class Explainer(Agent):
             # assuming that some component gets improved every time for now
             # TODO: should the basis be the original reference point from the DM or the solution?
             # TODO: check if the objectives are min or max (actually, the current solution should work both ways)
-            max_iterations = 15
+            max_iterations = 10
+            self.agent.iteration = 1
+            self.agent.example_pairs = []
             i = 1
-            while len(self.agent.example_pairs) < self.number_of_examples and i < max_iterations:
+            while len(self.agent.example_pairs) < self.number_of_examples and i < self.agent.max_iterations:
                 await asyncio.sleep(0)
                 new_reference_point = self.agent.solution.copy()
-                amount_to_improve = (self.agent.problem_ideal[to_improve] - self.agent.solution[to_improve]) / (max_iterations/(i))
+                """if self.agent.reference_point == self.agent.problem_ideal or self.agent.reference_point == self.agent.problem_nadir:
+                    new_reference_point = self.agent.solution.copy()
+                else:
+                    new_reference_point = self.agent.reference_point.copy()"""
+                amount_to_improve = (self.agent.problem_ideal[to_improve] - new_reference_point[to_improve]) / (3*max_iterations/(i))
                 new_reference_point[to_improve] = new_reference_point[to_improve] + amount_to_improve
                 if to_impair:
-                    amount_to_impair = (self.agent.solution[to_impair] - self.agent.problem_nadir[to_impair]) / (max_iterations/(i))
+                    amount_to_impair = (new_reference_point[to_impair] - self.agent.problem_nadir[to_impair]) / (3*max_iterations/(i))
                     new_reference_point[to_impair] = new_reference_point[to_impair] - amount_to_impair
                 msg = Message(
                     to="coordinator@localhost",
@@ -800,7 +820,7 @@ class Explainer(Agent):
                     metadata={"performative": "inform"}
                 )
                 await self.send(msg)
-                #file.write(f"{self.agent.jid} sent message {msg} at {time.time()}\n")
+                file.write(f"{self.agent.jid} sent message {msg} at {time.time()}\n")
                 #print(f"{self.agent.jid} sent message {msg} at {time.time()}")
                 i = i + 1
             #self.agent.ready_to_send_explanations = True
@@ -830,6 +850,7 @@ class Explainer(Agent):
             self.agent.has_new_data = False
             self.agent.can_send_explanations = False
             self.agent.has_sent_explanations = True
+            self.agent.iteration = 1
 
     class ReceiveInformMessages(CyclicBehaviour):
         async def run(self):
@@ -844,10 +865,12 @@ class Explainer(Agent):
                     self.agent.shaps = contents["shaps"]
                     self.agent.has_new_data = True
                     self.agent.ready_to_send_explanations = False
+                    self.agent.has_sent_explanations = False
                     self.agent.add_behaviour(self.agent.GenerateExamples(number_of_examples=5))
                     #if self.agent.can_send_explanations:
                         #self.agent.add_behaviour(self.agent.SendExamples(receiver=msg.sender.full))
                 elif all(key in contents for key in ("reference_point", "solution")):
+                    self.agent.iteration = self.agent.iteration + 1
                     unique = True
                     for (_, solution) in self.agent.example_pairs:
                         for symbol in self.agent.objective_symbols:
@@ -856,10 +879,14 @@ class Explainer(Agent):
                                 break
                     if unique and (contents["solution"][self.agent.objective] > self.agent.solution[self.agent.objective]) and len(self.agent.example_pairs) < self.agent.number_of_examples:
                         self.agent.example_pairs.append((contents["reference_point"], contents["solution"]))
-                        if len(self.agent.example_pairs) >= self.agent.number_of_examples:
+                        if len(self.agent.example_pairs) >= self.agent.number_of_examples or self.agent.iteration >= self.agent.max_iterations:
                             self.agent.ready_to_send_explanations = True
                             if self.agent.can_send_explanations and not self.agent.has_sent_explanations:
                                 self.agent.add_behaviour(self.agent.SendExamples(receiver=msg.sender.full))
+                    elif self.agent.iteration >= self.agent.max_iterations:
+                        self.agent.ready_to_send_explanations = True
+                        if self.agent.can_send_explanations and not self.agent.has_sent_explanations:
+                            self.agent.add_behaviour(self.agent.SendExamples(receiver=msg.sender.full))
 
     async def setup(self):
         print(f"{self.jid.username} started.")
@@ -875,10 +902,13 @@ async def main():
 
     # initialize and start a SHAP agent
     shap_agent = SHAPAgent("shapagent@localhost", "shapagent", sample_file="sample.json")
+    #shap_agent = SHAPAgent("shapagent@localhost", "shapagent", sample_file="test_sample.json")
+    #shap_agent = SHAPAgent("shapagent@localhost", "shapagent")
     await shap_agent.start(auto_register=True)
 
     # initialize and start a preference agent
     preference_agent = PreferenceAgent("preferenceagent@localhost", "preferenceagent", problem=utopia_problem_old()[0])
+    #preference_agent = PreferenceAgent("preferenceagent@localhost", "preferenceagent", problem=simple_linear_test_problem())
     await preference_agent.start(auto_register=True)
 
     # initialize and start a coordinator agent
@@ -890,7 +920,7 @@ async def main():
         while True:
             await asyncio.sleep(1)
     except KeyboardInterrupt:
-        #file.close()
+        file.close()
         print("Stopping agents...")
         await solver_agent.stop()
         await coordinator_agent.stop()
