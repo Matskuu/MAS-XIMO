@@ -21,7 +21,7 @@ from desdeo.explanations import ShapExplainer, generate_biased_mean_data
 from desdeo.mcdm import rpm_solve_solutions
 from desdeo.problem import Problem
 from desdeo.utopia_stuff.utopia_problem_old import utopia_problem_old
-from desdeo.problem.testproblems import simple_linear_test_problem
+from desdeo.problem.testproblems import dtlz2
 
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -231,7 +231,9 @@ class PreferenceAgent(Agent):
                 elif all(key in contents for key in ("explanation", "examples")):
                     print("Preference agent received an explanation.")
                     self.agent.explanation = contents["explanation"]
-                    self.agent.examples = contents["examples"]
+                    examples = contents["examples"]
+                    examples_ordered = sorted(examples, key=lambda d: d[1][self.agent.target])
+                    self.agent.examples = examples_ordered
                     if self.agent.explanation_type == "0":
                         print(self.agent.explanation)
                         print(f"Original solution: {self.agent.solution}")
@@ -456,7 +458,7 @@ class SHAPAgent(Agent):
                         target,
                         min_size=5,
                         max_size=20,
-                        solver="GUROBI"
+                        #solver="GUROBI"
                     )
                 )
             except RuntimeError as e:
@@ -734,7 +736,7 @@ class Explainer(Agent):
         self.examples = None
         self.example_pairs = []
         self.explanation = None
-        self.number_of_examples = 5
+        self.number_of_examples = 3
         self.iteration = 1
         self.max_iterations = 10 # TODO: make this an argument
 
@@ -866,7 +868,7 @@ class Explainer(Agent):
                     self.agent.has_new_data = True
                     self.agent.ready_to_send_explanations = False
                     self.agent.has_sent_explanations = False
-                    self.agent.add_behaviour(self.agent.GenerateExamples(number_of_examples=5))
+                    self.agent.add_behaviour(self.agent.GenerateExamples(number_of_examples=3))
                     #if self.agent.can_send_explanations:
                         #self.agent.add_behaviour(self.agent.SendExamples(receiver=msg.sender.full))
                 elif all(key in contents for key in ("reference_point", "solution")):
@@ -908,7 +910,7 @@ async def main():
 
     # initialize and start a preference agent
     preference_agent = PreferenceAgent("preferenceagent@localhost", "preferenceagent", problem=utopia_problem_old()[0])
-    #preference_agent = PreferenceAgent("preferenceagent@localhost", "preferenceagent", problem=simple_linear_test_problem())
+    #preference_agent = PreferenceAgent("preferenceagent@localhost", "preferenceagent", problem=dtlz2(3,3))
     await preference_agent.start(auto_register=True)
 
     # initialize and start a coordinator agent
