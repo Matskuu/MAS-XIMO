@@ -31,6 +31,7 @@ import time
 file = open("mas_log.txt", mode="w")
 
 executor = ThreadPoolExecutor(max_workers=1)
+executor2 = ThreadPoolExecutor(max_workers=1)
 
 class Solver(Agent):
     def __init__(self, jid, password, solver, port = 5222, verify_security = False):
@@ -91,6 +92,9 @@ class Solver(Agent):
                 print("Caught RuntimeError in executor:", e)
                 return
             solution = result[0].optimal_objectives
+            obj_symbols = [obj.symbol for obj in self.agent.problem.objectives]
+            for symbol in obj_symbols:
+                solution[symbol] = int(round(solution[symbol], 0))
             file.write(f"Time after solved for {self.reference_point} is {time.time()}\n")
             if self.sender:
                 self.agent.add_behaviour(self.agent.SendSolution(sender=self.sender, reference_point=self.reference_point, solution=solution))
@@ -148,14 +152,29 @@ class PreferenceAgent(Agent):
     class ShowOptions(OneShotBehaviour):
         async def run(self):
             while True:
-                choice = await self.agent.get_input("Choose an option to proceed:\n0 = provide a new reference point\n1 = choose a different target\n2 = choose different explanation type\n3 = choose current solution as the final solution\n")
+                choice = await self.agent.get_input("Choose an option to proceed:\n0 = select one of the examples as new reference point\n1 = provide a new reference point\n2 = choose a different target objective\n3 = choose different explanation type\n4 = choose current solution as the final solution\n")
                 if choice == "0":
-                    self.agent.add_behaviour(self.agent.SendData("reference point"))
+                    while True:
+                        example_number = await self.agent.get_input("Provide the number of the example: ")
+                        valid = False
+                        for i in range(len(self.agent.examples)):
+                            if example_number == str(i):
+                                valid = True
+                                break
+                        if valid:
+                            break
+                        else:
+                            print("Option not valid.")
+                    new_reference_point = self.agent.examples[int(example_number)][1]
+                    self.agent.add_behaviour(self.agent.SendData("reference point", reference_point=new_reference_point))
                     break
                 elif choice == "1":
-                    self.agent.add_behaviour(self.agent.SendData("target"))
+                    self.agent.add_behaviour(self.agent.SendData("reference point"))
                     break
                 elif choice == "2":
+                    self.agent.add_behaviour(self.agent.SendData("target"))
+                    break
+                elif choice == "3":
                     while True:
                         explanation_type = await self.agent.get_input("What type of explanation would you like (0 = R-XIMO suggestion, 1 = R-XIMO suggestion + examples)? ")
                         if explanation_type == "0" or "1":
@@ -218,35 +237,62 @@ class PreferenceAgent(Agent):
                     #self.agent.add_behaviour(self.agent.SendData("problem"))
                     self.agent.add_behaviour(self.agent.SendData(content_type="reference point"))
                     if self.agent.received_solution:
+                        """while True:
+                            option = await self.agent.get_input("Choose how you would like to proceed:\n0 = provide a target objective\n1 = provide a new reference point\n")
+                            if option == "0":
+                                self.agent.add_behaviour(self.agent.SendData(content_type="target"))
+                                self.agent.received_solution = False
+                                break
+                            elif option == "1":
+                                self.agent.add_behaviour(self.agent.SendData(content_type="reference_point"))
+                                break
+                            else:
+                                print("Invalid option.")"""
                         self.agent.add_behaviour(self.agent.SendData(content_type="target"))
                         self.agent.received_solution = False
                 elif "solution" in contents:
-                    print(f"Solution found based on the reference point: {contents["solution"]}")
+                    print(f"\nSolution found based on the reference point: {contents["solution"]}\n")
                     file.write(f"Preference agent received solution {contents["solution"]} at {time.time()}\n")
                     self.agent.received_solution = True
                     self.agent.solution = contents["solution"]
                     if self.agent.can_send_target:
+                        """while True:
+                            option = await self.agent.get_input("Choose how you would like to proceed:\n0 = provide an objective to improve\n1 = provide a new reference point\n")
+                            if option == "0":
+                                self.agent.add_behaviour(self.agent.SendData(content_type="target"))
+                                self.agent.received_solution = False
+                                break
+                            elif option == "1":
+                                self.agent.add_behaviour(self.agent.SendData(content_type="reference point"))
+                                break
+                            else:
+                                print("Invalid option.")"""
                         self.agent.add_behaviour(self.agent.SendData(content_type="target"))
                         self.agent.received_solution = False
                 elif all(key in contents for key in ("explanation", "examples")):
-                    print("Preference agent received an explanation.")
+                    #print("Preference agent received an explanation.")
                     self.agent.explanation = contents["explanation"]
                     examples = contents["examples"]
                     examples_ordered = sorted(examples, key=lambda d: d[1][self.agent.target])
+                    for i in range(len(examples_ordered)):
+                        examples_ordered[i].append(i)
                     self.agent.examples = examples_ordered
                     if self.agent.explanation_type == "0":
                         print(self.agent.explanation)
                         print(f"Original solution: {self.agent.solution}")
                     elif self.agent.explanation_type == "1":
-                        print(self.agent.explanation)
+                        print("----------------------------------------------------------------------------------")
+                        print(f"Suggestion: {self.agent.explanation}")
+                        print("----------------------------------------------------------------------------------")
                         print(f"Original solution: {self.agent.solution}")
-                        print("-----------------------------------------")
-                        for reference_point, solution in self.agent.examples:
+                        print("----------------------------------------------------------------------------------")
+                        for reference_point, solution, number in self.agent.examples:
+                            print(number)
                             print(f"Reference point: {reference_point}")
                             print(f"Solution: {solution}")
-                            for symbol in solution:
-                                print(f"{self.agent.problem.get_objective(symbol).name}: {solution[symbol]}")
-                            print("-----------------------------------------")
+                            #for symbol in solution:
+                            #    print(f"{self.agent.problem.get_objective(symbol).name}: {solution[symbol]}")
+                            print("----------------------------------------------------------------------------------")
                     # TODO: what if instead of defaulting to reference point, we give the option to choose a different target, different explanations etc.?
                     self.agent.add_behaviour(self.agent.ShowOptions())
                     #self.agent.add_behaviour(self.agent.SendData("reference point"))
@@ -262,9 +308,10 @@ class PreferenceAgent(Agent):
                     self.agent.add_behaviour(self.agent.SendData(content_type="problem"))
 
     class SendData(OneShotBehaviour):
-        def __init__(self, content_type: str):
+        def __init__(self, content_type: str, reference_point = None):
             super().__init__()
             self.content_type = content_type
+            self.reference_point = reference_point
 
         async def get_input(self, prompt):
             print(prompt, end='', flush=True)
@@ -320,35 +367,50 @@ class PreferenceAgent(Agent):
                 await self.send(msg)
                 #print(f"The problem sent: {self.agent.problem.name}.")
             elif self.content_type == "reference point":
-                for symbol in self.agent.objective_symbols:
-                    objective = self.agent.problem.get_objective(symbol)
-                    maximize = objective.maximize
-                    if maximize:
-                        range = [self.agent.problem_nadir[symbol], self.agent.problem_ideal[symbol]]
-                    else:
-                        range = [self.agent.problem_ideal[symbol], self.agent.problem_nadir[symbol]]
-                    while True:
-                        try:
-                            #value = input(f"Provide a value for objective {symbol} ({objective.name}) within range {range}: ")
-                            value = await self.get_input(f"Provide a value for objective {symbol} ({objective.name}) within range {range}: ")
-                            if value == "ideal":
-                                self.agent.reference_point[symbol] = self.agent.problem_ideal[symbol]
-                                break
-                            elif value == "nadir":
-                                self.agent.reference_point[symbol] = self.agent.problem_nadir[symbol]
-                                break
-                            else:
-                                if not maximize and self.agent.problem_ideal[symbol] <= float(value) <= self.agent.problem_nadir[symbol]:
-                                    self.agent.reference_point[symbol] = float(value)
+                if self.reference_point:
+                    reference_point = self.reference_point
+                else:
+                    reference_point = {}
+                    for symbol in self.agent.objective_symbols:
+                        objective = self.agent.problem.get_objective(symbol)
+                        maximize = objective.maximize
+                        if maximize:
+                            range = [self.agent.problem_nadir[symbol], self.agent.problem_ideal[symbol]]
+                        else:
+                            range = [self.agent.problem_ideal[symbol], self.agent.problem_nadir[symbol]]
+                        while True:
+                            try:
+                                #value = input(f"Provide a value for objective {symbol} ({objective.name}) within range {range}: ")
+                                if self.agent.solution:
+                                    value = await self.get_input(f"Provide a value for objective {symbol} ({objective.name}) within range {range} or press Enter to keep current value {self.agent.solution[symbol]}: ")
+                                else:
+                                    value = await self.get_input(f"Provide a value for objective {symbol} ({objective.name}) within range {range}: ")
+                                if value == "ideal":
+                                    reference_point[symbol] = self.agent.problem_ideal[symbol]
+                                    self.agent.reference_point[symbol] = reference_point[symbol]
                                     break
-                                elif maximize and self.agent.problem_ideal[symbol] >= float(value) >= self.agent.problem_nadir[symbol]:
-                                    self.agent.reference_point[symbol] = float(value)
+                                elif value == "nadir":
+                                    reference_point[symbol] = self.agent.problem_nadir[symbol]
+                                    self.agent.reference_point[symbol] = reference_point[symbol]
+                                    break
+                                elif value == "" and self.agent.solution:
+                                    reference_point[symbol] = self.agent.solution[symbol]
+                                    self.agent.reference_point[symbol] = reference_point[symbol]
                                     break
                                 else:
-                                    raise ValueError()
-                        except ValueError:
-                            print(f"Value for reference point component {symbol} not valid!. Please enter a numerical value within range {range}, ideal or nadir.")
-                contents = {"reference_point": self.agent.reference_point}
+                                    if not maximize and self.agent.problem_ideal[symbol] <= float(value) <= self.agent.problem_nadir[symbol]:
+                                        reference_point[symbol] = float(value)
+                                        self.agent.reference_point[symbol] = float(value)
+                                        break
+                                    elif maximize and self.agent.problem_ideal[symbol] >= float(value) >= self.agent.problem_nadir[symbol]:
+                                        reference_point[symbol] = float(value)
+                                        self.agent.reference_point[symbol] = float(value)
+                                        break
+                                    else:
+                                        raise ValueError()
+                            except ValueError:
+                                print(f"Value for reference point component {symbol} not valid!. Please enter a numerical value within range {range}, ideal or nadir.")
+                contents = {"reference_point": reference_point}
                 msg = Message(
                     to="coordinator@localhost",
                     body=json.dumps(contents),
@@ -356,7 +418,7 @@ class PreferenceAgent(Agent):
                 )
                 #print("Preference agent sending a reference point...")
                 await self.send(msg)
-                file.write(f"Preference agent sent reference point {self.agent.reference_point} at {time.time()}\n")
+                file.write(f"Preference agent sent reference point {reference_point} at {time.time()}\n")
                 #print(f"A reference point sent: {self.agent.reference_point}.")
     
     async def setup(self):
@@ -794,7 +856,7 @@ class Explainer(Agent):
             if max_effect < 0:
                 to_impair = None
 
-            explanation = f"To get better value for objective {self.agent.objective}, try to improve objective {to_improve} and impair objective {to_impair} in the reference point."
+            explanation = f"\nTo get better value for objective {self.agent.objective}, try to improve objective {to_improve} and impair objective {to_impair} in the reference point.\n"
             self.agent.explanation = explanation
 
             # assuming that some component gets improved every time for now
@@ -812,10 +874,10 @@ class Explainer(Agent):
                 else:
                     new_reference_point = self.agent.reference_point.copy()"""
                 amount_to_improve = (self.agent.problem_ideal[to_improve] - new_reference_point[to_improve]) / (3*max_iterations/(i))
-                new_reference_point[to_improve] = new_reference_point[to_improve] + amount_to_improve
+                new_reference_point[to_improve] = int(round(new_reference_point[to_improve] + amount_to_improve, 0))
                 if to_impair:
                     amount_to_impair = (new_reference_point[to_impair] - self.agent.problem_nadir[to_impair]) / (3*max_iterations/(i))
-                    new_reference_point[to_impair] = new_reference_point[to_impair] - amount_to_impair
+                    new_reference_point[to_impair] = int(round(new_reference_point[to_impair] - amount_to_impair, 0))
                 msg = Message(
                     to="coordinator@localhost",
                     body=json.dumps({"reference_point": new_reference_point}),
@@ -912,6 +974,7 @@ async def main():
     preference_agent = PreferenceAgent("preferenceagent@localhost", "preferenceagent", problem=utopia_problem_old()[0])
     #preference_agent = PreferenceAgent("preferenceagent@localhost", "preferenceagent", problem=dtlz2(3,3))
     await preference_agent.start(auto_register=True)
+    #preference_agent.web.start(hostname="127.0.0.1", port="10000")
 
     # initialize and start a coordinator agent
     coordinator_agent = CoordinatorAgent("coordinator@localhost", "coordinator")
