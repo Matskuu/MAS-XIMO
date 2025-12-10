@@ -133,6 +133,7 @@ class PreferenceAgent(Agent):
         super().__init__(jid, password, port, verify_security)
         self.can_send_target = False
         self.received_solution = False
+        self.received_explanations = False
         self.problem = problem
         self.objective_symbols = [obj.symbol for obj in self.problem.objectives]
         self.problem_ideal = self.problem.get_ideal_point()
@@ -193,15 +194,18 @@ class PreferenceAgent(Agent):
                 print(self.agent.explanation)
                 print(f"Original solution: {self.agent.solution}")
             elif self.agent.explanation_type == "1":
-                print(self.agent.explanation)
+                print("----------------------------------------------------------------------------------")
+                print(f"Suggestion: {self.agent.explanation}")
+                print("----------------------------------------------------------------------------------")
                 print(f"Original solution: {self.agent.solution}")
-                print("-----------------------------------------")
-                for reference_point, solution in self.agent.examples:
+                print("----------------------------------------------------------------------------------")
+                for reference_point, solution, number in self.agent.examples:
+                    print(number)
                     print(f"Reference point: {reference_point}")
                     print(f"Solution: {solution}")
-                    for symbol in solution:
-                        print(f"{self.agent.problem.get_objective(symbol).name}: {solution[symbol]}")
-                    print("-----------------------------------------")
+                    #for symbol in solution:
+                    #    print(f"{self.agent.problem.get_objective(symbol).name}: {solution[symbol]}")
+                    print("----------------------------------------------------------------------------------")
             # TODO: what if instead of defaulting to reference point, we give the option to choose a different target, different explanations etc.?
             self.agent.add_behaviour(self.agent.ShowOptions())
 
@@ -270,7 +274,8 @@ class PreferenceAgent(Agent):
                         self.agent.add_behaviour(self.agent.SendData(content_type="target"))
                         self.agent.received_solution = False
                 elif all(key in contents for key in ("explanation", "examples")):
-                    #print("Preference agent received an explanation.")
+                    #print(f"Preference agent received an explanation. {contents["examples"]}")
+                    #self.agent.received_explanations = True
                     self.agent.explanation = contents["explanation"]
                     examples = contents["examples"]
                     examples_ordered = sorted(examples, key=lambda d: d[1][self.agent.target])
@@ -518,7 +523,7 @@ class SHAPAgent(Agent):
                         generate_biased_mean_data,
                         data,
                         target,
-                        min_size=5,
+                        min_size=4,
                         max_size=20,
                         #solver="GUROBI"
                     )
@@ -748,7 +753,7 @@ class CoordinatorAgent(Agent):
                         self.agent.reference_point = contents["reference_point"]
                         self.agent.add_behaviour(self.agent.SendInformMessages(content_type="reference point"))
                 elif "shaps" in contents:
-                    #print("coordinator received SHAPs.")
+                    #print(f"coordinator received SHAPs.{contents}")
                     self.agent.shaps = contents["shaps"]
                     self.agent.received_shaps = True
                     if self.agent.received_solution:
@@ -909,8 +914,8 @@ class Explainer(Agent):
                 metadata={"performative": "inform"}
             )
             await self.send(msg)
-            #print("Examples sent.")
-            #self.agent.ready_to_send_explanations = False
+            print("Examples sent.")
+            self.agent.ready_to_send_explanations = False
             self.agent.has_new_data = False
             self.agent.can_send_explanations = False
             self.agent.has_sent_explanations = True
