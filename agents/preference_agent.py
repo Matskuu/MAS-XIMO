@@ -214,7 +214,7 @@ class PreferenceAgent(Agent):
 
             while True:
                 value = await self.agent.get_input(
-                    "\nProvide one or more target objectives "
+                    "\nSelect one or more objectives "
                     "to improve "
                     f"(e.g. {available[0]} or "
                     f"{available[0]} {available[-1]}): "
@@ -281,7 +281,7 @@ class PreferenceAgent(Agent):
                 + ", ".join(targets)
             )
             print(
-                "Generating explanation..."
+                "Generating explanation and validating the suggestion with RPM..."
             )
 
     class ShowNextOptions(OneShotBehaviour):
@@ -447,11 +447,9 @@ class PreferenceAgent(Agent):
         self,
         contents: dict,
     ) -> None:
-        """Display the concise Owen/R-XIMO recommendation."""
+        """Display the concise Owen/R-XIMO recommendation and validation."""
         print()
-        print(
-            "SUGGESTION"
-        )
+        print("SUGGESTION")
         print("=" * 60)
 
         targets = contents.get(
@@ -476,6 +474,101 @@ class PreferenceAgent(Agent):
             print(
                 "No suggestion was generated."
             )
+
+        counterfactual = contents.get(
+            "counterfactual"
+        )
+
+        if counterfactual:
+            print()
+            print("Counterfactual check")
+            print("-" * 60)
+
+            outcome = counterfactual.get(
+                "outcome_type"
+            )
+
+            improved = counterfactual.get(
+                "improved_targets",
+                [],
+            )
+
+            worsened = counterfactual.get(
+                "worsened_targets",
+                [],
+            )
+
+            unchanged = counterfactual.get(
+                "unchanged_targets",
+                [],
+            )
+
+            if outcome == "joint_improvement":
+                print(
+                    "The suggested preference change improved "
+                    "all selected target objectives in the RPM check."
+                )
+
+            elif outcome == "partial_improvement":
+                print(
+                    "The suggested preference change improved "
+                    "some selected targets without worsening "
+                    "the others."
+                )
+
+                if improved:
+                    print(
+                        "Improved: "
+                        + ", ".join(improved)
+                    )
+
+                if unchanged:
+                    print(
+                        "Unchanged: "
+                        + ", ".join(unchanged)
+                    )
+
+            elif outcome == "target_conflict":
+                print(
+                    "The suggested preference change did not "
+                    "improve all selected targets together."
+                )
+
+                if improved:
+                    print(
+                        "Improved: "
+                        + ", ".join(improved)
+                    )
+
+                if worsened:
+                    print(
+                        "Worsened: "
+                        + ", ".join(worsened)
+                    )
+
+            elif outcome == "no_improvement":
+                print(
+                    "The suggested preference change did not "
+                    "improve the selected target objectives."
+                )
+
+                if worsened:
+                    print(
+                        "Worsened: "
+                        + ", ".join(worsened)
+                    )
+
+                if unchanged:
+                    print(
+                        "Unchanged: "
+                        + ", ".join(unchanged)
+                    )
+
+            elif outcome == "negligible_change":
+                print(
+                    "The suggested preference change produced "
+                    "no meaningful change in the selected targets."
+                )
 
         print()
 
@@ -574,6 +667,55 @@ class PreferenceAgent(Agent):
                     )
                 else:
                     print(row)
+
+        counterfactual = contents.get(
+            "counterfactual"
+        )
+
+        if counterfactual:
+            print()
+            print("Counterfactual validation")
+            print("-" * 60)
+
+            outcome = counterfactual.get(
+                "outcome_type"
+            )
+
+            if outcome is not None:
+                print(
+                    f"Outcome: {outcome}"
+                )
+
+            changes = counterfactual.get(
+                "changes",
+                [],
+            )
+
+            if changes:
+                print()
+                print("Target comparison:")
+
+                for change in changes:
+                    print(
+                        f"{change['symbol']}: "
+                        f"{float(change['original_value']):.6f} "
+                        "-> "
+                        f"{float(change['adjusted_value']):.6f} "
+                        f"({change['status']})"
+                    )
+
+            adjusted_reference_point = (
+                counterfactual.get(
+                    "adjusted_reference_point"
+                )
+            )
+
+            if adjusted_reference_point is not None:
+                print()
+                print(
+                    "Counterfactual reference point: "
+                    f"{adjusted_reference_point}"
+                )
 
         print()
 

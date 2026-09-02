@@ -30,18 +30,28 @@ class SolverAgent(Agent):
         """Receive and solve reference-point requests."""
 
         async def run(self):
-            message = await self.receive(timeout=10)
+            message = await self.receive(
+                timeout=10
+            )
 
             if message is None:
                 return
 
             try:
-                contents = json.loads(message.body)
+                contents = json.loads(
+                    message.body
+                )
+
             except json.JSONDecodeError:
-                print("Solver received invalid JSON.")
+                print(
+                    "Solver received invalid JSON."
+                )
                 return
 
-            if contents.get("type") != "solve_reference_point":
+            if (
+                contents.get("type")
+                != "solve_reference_point"
+            ):
                 return
 
             reference_point = np.asarray(
@@ -50,10 +60,12 @@ class SolverAgent(Agent):
             )
 
             try:
-                solution_min = await asyncio.to_thread(
-                    solve_reference_point_with_desdeo_rpm,
-                    self.agent.problem,
-                    reference_point,
+                solution_min = (
+                    await asyncio.to_thread(
+                        solve_reference_point_with_desdeo_rpm,
+                        self.agent.problem,
+                        reference_point,
+                    )
                 )
 
             except Exception as error:
@@ -63,22 +75,47 @@ class SolverAgent(Agent):
                 )
                 return
 
-            solution_original = orient_objectives_from_minimize(
-                self.agent.problem,
-                solution_min,
+            solution_original = (
+                orient_objectives_from_minimize(
+                    self.agent.problem,
+                    solution_min,
+                )
             )
+
+            response_contents = {
+                "type": "solution",
+                "reference_point": (
+                    reference_point.tolist()
+                ),
+                "solution_min": (
+                    solution_min.tolist()
+                ),
+                "solution_original": (
+                    solution_original.tolist()
+                ),
+                "purpose": contents.get(
+                    "purpose",
+                    "decision",
+                ),
+            }
+
+            request_id = contents.get(
+                "request_id"
+            )
+
+            if request_id is not None:
+                response_contents[
+                    "request_id"
+                ] = request_id
 
             response = Message(
                 to="coordinator@localhost",
                 body=json.dumps(
-                    {
-                        "type": "solution",
-                        "reference_point": reference_point.tolist(),
-                        "solution_min": solution_min.tolist(),
-                        "solution_original": solution_original.tolist(),
-                    }
+                    response_contents
                 ),
-                metadata={"performative": "inform"},
+                metadata={
+                    "performative": "inform"
+                },
             )
 
             await self.send(response)
