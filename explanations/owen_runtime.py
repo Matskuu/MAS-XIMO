@@ -166,7 +166,7 @@ def generate_explanation_result(
         reference_point_original,
     )
 
-    ideal_min, _ = get_ideal_and_nadir_minimized(problem)
+    ideal_min, nadir_min = get_ideal_and_nadir_minimized(problem)
 
     objective_symbols = get_objective_symbols(problem)
 
@@ -231,6 +231,7 @@ def generate_explanation_result(
         coalition_advantage_threshold,
         reference_point_min,
         ideal_min,
+        nadir_min,
         objective_symbols,
     )
 

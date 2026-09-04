@@ -77,6 +77,9 @@ class RXIMOSuggestion:
     actionable_target_members: tuple[str, ...]
     non_actionable_target_members: tuple[str, ...]
     rival_members: tuple[str, ...]
+    selected_action_rival_members: tuple[str, ...]
+    actionable_rival_members: tuple[str, ...]
+    non_actionable_rival_members: tuple[str, ...]
     strongest_supporter_members: tuple[str, ...]
     strongest_rival_members: tuple[str, ...]
     explanation: str
@@ -186,11 +189,46 @@ def actionable_target_members(
         aspiration = float(reference_point_min[index])
         ideal = float(ideal_min[index])
 
-        if (
-            aspiration > ideal
-            and not np.isclose(aspiration, ideal)
-        ):
+        if aspiration > ideal:
             actionable.append(target)
+
+    return tuple(actionable)
+
+
+def actionable_rival_members(
+    rival_members: tuple[str, ...],
+    reference_point_min: np.ndarray,
+    nadir_min: np.ndarray,
+    objective_symbols: list[str],
+) -> tuple[str, ...]:
+    """Return rival aspirations that can still be impaired.
+
+    A rival is actionable only when its aspiration is better than its nadir
+    value in common minimization orientation. Aspirations already at or beyond
+    the nadir are omitted from the preference-change suggestion.
+
+    Args:
+        rival_members: rival reference point component symbols.
+        reference_point_min: reference point in common minimization orientation.
+        nadir_min: nadir objective vector in common minimization orientation.
+        objective_symbols: objective symbols in problem order.
+
+    Returns:
+        Rival members for which further aspiration impairment is meaningful.
+    """
+    actionable = []
+
+    for rival in rival_members:
+        index = objective_index(
+            rival,
+            objective_symbols,
+        )
+
+        aspiration = float(reference_point_min[index])
+        nadir = float(nadir_min[index])
+
+        if aspiration < nadir:
+            actionable.append(rival)
 
     return tuple(actionable)
 
@@ -556,18 +594,31 @@ def select_rival_for_case(
     case_number: int,
     effects: EffectSummary,
 ) -> CoalitionCandidate | None:
-    """Select the external coalition to impair for a classified case.
+    """Select the explanatory external coalition for a classified R-XIMO case.
+
+    This selection is based only on the retained coalition effects and the
+    generalized R-XIMO case. Aspiration bounds are intentionally not considered
+    here because this coalition is used to explain the case, not to determine
+    whether a preference adjustment is still actionable.
 
     Args:
         case_number: generalized R-XIMO case number.
         effects: retained coalition-effect summary.
 
     Returns:
-        Selected external coalition candidate, or ``None`` when no suitable
-        alternative exists.
+        External coalition used in the R-XIMO explanation, or ``None`` when no
+        suitable external alternative exists.
     """
     if case_number in {1, 5, 7, 9}:
-        return effects.strongest_rival
+        rival = effects.strongest_rival
+
+        if (
+            rival is not None
+            and rival.category == "external"
+        ):
+            return rival
+
+        return effects.alternative_rival
 
     if case_number in {2, 8}:
         return effects.alternative_rival
@@ -576,6 +627,101 @@ def select_rival_for_case(
         return effects.weakest_external_supporter
 
     return None
+
+
+def rank_rivals_for_case(
+    case_number: int,
+    effects: EffectSummary,
+) -> list[CoalitionCandidate]:
+    """Rank external preference-change candidates for an R-XIMO case.
+
+    Cases 1, 2, 5, 7, 8, and 9 seek the strongest external impairing
+    coalition. Cases 3, 4, and 6 seek the weakest external supporting
+    coalition.
+
+    Args:
+        case_number: generalized R-XIMO case number.
+        effects: retained coalition-effect summary.
+
+    Returns:
+        External candidates ordered from most preferred to least preferred
+        for the corresponding case.
+    """
+    external = [
+        candidate
+        for candidate in effects.retained_candidates
+        if candidate.category == "external"
+    ]
+
+    if case_number in {1, 2, 5, 7, 8, 9}:
+        return sorted(
+            (
+                candidate
+                for candidate in external
+                if candidate.role == "rival"
+            ),
+            key=lambda row: row.contribution,
+        )
+
+    if case_number in {3, 4, 6}:
+        return sorted(
+            (
+                candidate
+                for candidate in external
+                if candidate.role == "supporter"
+            ),
+            key=lambda row: row.contribution,
+        )
+
+    return []
+
+
+def select_actionable_rival_for_case(
+    case_number: int,
+    effects: EffectSummary,
+    reference_point_min: np.ndarray,
+    nadir_min: np.ndarray,
+    objective_symbols: list[str],
+) -> tuple[
+    CoalitionCandidate | None,
+    tuple[str, ...],
+    tuple[str, ...],
+]:
+    """Select the strongest rival candidate with an available adjustment.
+
+    Returns:
+        Selected coalition, its actionable members, and members already at or
+        beyond nadir.
+    """
+    ranked_candidates = rank_rivals_for_case(
+        case_number,
+        effects,
+    )
+
+    for candidate in ranked_candidates:
+        actionable = actionable_rival_members(
+            candidate.members,
+            reference_point_min,
+            nadir_min,
+            objective_symbols,
+        )
+
+        if not actionable:
+            continue
+
+        non_actionable = tuple(
+            member
+            for member in candidate.members
+            if member not in actionable
+        )
+
+        return (
+            candidate,
+            actionable,
+            non_actionable,
+        )
+
+    return None, (), ()
 
 
 def case_name(case_number: int) -> str:
@@ -693,37 +839,28 @@ def generate_explanation(
 
 def generate_suggestion(
     actionable_targets: tuple[str, ...],
-    rival: CoalitionCandidate | None,
+    actionable_rivals: tuple[str, ...],
 ) -> str:
-    """Generate an actionable preference-change suggestion.
-
-    Args:
-        actionable_targets: target reference point components whose aspirations
-            can still be improved.
-        rival: external reference point coalition that may be impaired.
-
-    Returns:
-        Decision-maker-facing preference suggestion.
-    """
+    """Generate an actionable preference-change suggestion."""
     if actionable_targets:
         target_text = format_members(actionable_targets)
 
-        if rival is None:
+        if actionable_rivals:
+            rival_text = format_members(actionable_rivals)
             return (
-                f"Try improving the aspiration levels for {target_text}. "
-                "No separate rival aspiration coalition was identified."
+                f"Try improving the aspiration levels for {target_text} and "
+                f"impairing the aspiration levels for {rival_text}."
             )
 
-        rival_text = format_members(rival.members)
-
         return (
-            f"Try improving the aspiration levels for {target_text} and "
-            f"impairing the aspiration levels for {rival_text}."
+            f"Try improving the aspiration levels for {target_text}."
         )
 
-    if rival is not None:
-        rival_text = format_members(rival.members)
-        return f"Try impairing the aspiration levels for {rival_text}."
+    if actionable_rivals:
+        rival_text = format_members(actionable_rivals)
+        return (
+            f"Try impairing the aspiration levels for {rival_text}."
+        )
 
     return "No further aspiration-level adjustment was identified."
 
@@ -735,6 +872,7 @@ def build_rximo_suggestion(
     coalition_advantage_threshold: float,
     reference_point_min: np.ndarray,
     ideal_min: np.ndarray,
+    nadir_min: np.ndarray,
     objective_symbols: list[str],
 ) -> RXIMOSuggestion:
     """Build a complete generalized R-XIMO suggestion.
@@ -749,6 +887,8 @@ def build_rximo_suggestion(
         reference_point_min (np.ndarray): reference point in common minimization
             orientation.
         ideal_min (np.ndarray): ideal objective vector in common minimization
+            orientation.
+        nadir_min (np.ndarray): nadir objective vector in common minimization
             orientation.
         objective_symbols (list[str]): objective symbols in problem order.
 
@@ -784,7 +924,19 @@ def build_rximo_suggestion(
         effects,
         target_set,
     )
-    rival = select_rival_for_case(number, effects)
+
+    explanatory_rival = select_rival_for_case(
+        number,
+        effects,
+    )
+
+    action_rival, actionable_rivals, non_actionable_rivals = select_actionable_rival_for_case(
+        number,
+        effects,
+        reference_point_min,
+        nadir_min,
+        objective_symbols,
+    )
 
     return RXIMOSuggestion(
         case_number=number,
@@ -794,10 +946,17 @@ def build_rximo_suggestion(
         actionable_target_members=actionable_targets,
         non_actionable_target_members=non_actionable_targets,
         rival_members=(
-            tuple(rival.members)
-            if rival is not None
+            tuple(explanatory_rival.members)
+            if explanatory_rival is not None
             else ()
         ),
+        selected_action_rival_members=(
+            tuple(action_rival.members)
+            if action_rival is not None
+            else ()
+        ),
+        actionable_rival_members=actionable_rivals,
+        non_actionable_rival_members=non_actionable_rivals,
         strongest_supporter_members=(
             tuple(effects.strongest_supporter.members)
             if effects.strongest_supporter is not None
@@ -811,11 +970,11 @@ def build_rximo_suggestion(
         explanation=generate_explanation(
             number,
             target_members,
-            rival,
+            explanatory_rival,
             effects,
         ),
         suggestion=generate_suggestion(
             actionable_targets,
-            rival,
+            actionable_rivals,
         ),
     )

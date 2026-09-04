@@ -103,13 +103,45 @@ class CoordinatorAgent(Agent):
                     "reference_point": self.reference_point,
                     "solution_min": self.solution_min,
                     "targets": self.targets,
+
                     "target_members": self.latest_explanation.get(
                         "target_members",
                         [],
                     ),
+                    "actionable_target_members": (
+                        self.latest_explanation.get(
+                            "actionable_target_members",
+                            [],
+                        )
+                    ),
+                    "non_actionable_target_members": (
+                        self.latest_explanation.get(
+                            "non_actionable_target_members",
+                            [],
+                        )
+                    ),
+
                     "rival_members": self.latest_explanation.get(
                         "rival_members",
                         [],
+                    ),
+                    "selected_action_rival_members": (
+                        self.latest_explanation.get(
+                            "selected_action_rival_members",
+                            [],
+                        )
+                    ),
+                    "actionable_rival_members": (
+                        self.latest_explanation.get(
+                            "actionable_rival_members",
+                            [],
+                        )
+                    ),
+                    "non_actionable_rival_members": (
+                        self.latest_explanation.get(
+                            "non_actionable_rival_members",
+                            [],
+                        )
                     ),
                 }
             ),

@@ -184,16 +184,24 @@ class OwenExplanationService:
             "target_members": list(
                 suggestion.target_members
             ),
-            "actionable_target_members": [
-                clean_symbol(member)
-                for member in suggestion.actionable_target_members
-            ],
-            "non_actionable_target_members": [
-                clean_symbol(member)
-                for member in suggestion.non_actionable_target_members
-            ],
+            "actionable_target_members": list(
+                suggestion.actionable_target_members
+            ),
+            "non_actionable_target_members": list(
+                suggestion.non_actionable_target_members
+            ),
+
             "rival_members": list(
                 suggestion.rival_members
+            ),
+            "selected_action_rival_members": list(
+                suggestion.selected_action_rival_members
+            ),
+            "actionable_rival_members": list(
+                suggestion.actionable_rival_members
+            ),
+            "non_actionable_rival_members": list(
+                suggestion.non_actionable_rival_members
             ),
             "strongest_supporter_members": list(
                 suggestion.strongest_supporter_members

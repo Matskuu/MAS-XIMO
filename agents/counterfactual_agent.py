@@ -114,13 +114,14 @@ class CounterfactualAgent(Agent):
                             self.agent.input_symbols
                         ),
                         target_members=(
-                            contents[
-                                "target_members"
-                            ]
+                            contents.get(
+                                "actionable_target_members",
+                                [],
+                            )
                         ),
                         rival_members=(
                             contents.get(
-                                "rival_members",
+                                "actionable_rival_members",
                                 [],
                             )
                         ),

@@ -562,10 +562,26 @@ class PreferenceAgent(Agent):
                     )
 
             elif outcome == "negligible_change":
-                print(
-                    "The suggested preference change produced "
-                    "no meaningful change in the selected targets."
+                changes = counterfactual.get(
+                    "changes",
+                    [],
                 )
+
+                if len(changes) == 1:
+                    symbol = changes[0].get(
+                        "symbol",
+                        "the selected target",
+                    )
+
+                    print(
+                        "The tested preference change produced "
+                        f"no meaningful change in {symbol}."
+                    )
+                else:
+                    print(
+                        "The tested preference change produced "
+                        "no meaningful change in the selected targets."
+                    )
 
         print()
 
@@ -631,43 +647,124 @@ class PreferenceAgent(Agent):
             print("-" * 60)
             print(explanation)
 
+        actionable_targets = contents.get(
+            "actionable_target_members",
+            [],
+        )
         non_actionable_targets = contents.get(
             "non_actionable_target_members",
             [],
         )
+        actionable_rivals = contents.get(
+            "actionable_rival_members",
+            [],
+        )
+        rival_members = contents.get(
+            "rival_members",
+            [],
+        )
 
-        if non_actionable_targets:
-            cleaned_targets = [
-                target.removeprefix("r_").removeprefix("s_")
-                for target in non_actionable_targets
+        def display_members(
+            members: list[str],
+        ) -> str:
+            """Format machine-facing symbols for DM-facing output."""
+            cleaned = [
+                member
+                .removeprefix("r_")
+                .removeprefix("s_")
+                for member in members
             ]
 
-            if len(cleaned_targets) == 1:
-                target_text = cleaned_targets[0]
-            else:
-                target_text = (
-                    "{"
-                    + ", ".join(cleaned_targets)
-                    + "}"
-                )
+            if not cleaned:
+                return "none"
 
+            if len(cleaned) == 1:
+                return cleaned[0]
+
+            return (
+                "{"
+                + ", ".join(cleaned)
+                + "}"
+            )
+
+        if (
+            actionable_targets
+            or non_actionable_targets
+            or rival_members
+        ):
             print()
             print("Aspiration-level action")
             print("-" * 60)
 
-            if len(cleaned_targets) == 1:
-                print(
-                    f"The aspiration level for {target_text} is "
-                    "already at or beyond its ideal value, so no "
-                    "further improvement of this aspiration is suggested."
-                )
-            else:
-                print(
-                    f"The aspiration levels for {target_text} are "
-                    "already at or beyond their ideal values, so no "
-                    "further improvement of these aspirations is suggested."
+            if non_actionable_targets:
+                target_text = display_members(
+                    non_actionable_targets
                 )
 
+                if len(non_actionable_targets) == 1:
+                    print(
+                        f"The aspiration level for {target_text} is "
+                        "already at or beyond its ideal value, so no "
+                        "further improvement of this aspiration is suggested."
+                    )
+                else:
+                    print(
+                        f"The aspiration levels for {target_text} are "
+                        "already at or beyond their ideal values, so no "
+                        "further improvement of these aspirations is suggested."
+                    )
+
+            if actionable_targets:
+                target_text = display_members(
+                    actionable_targets
+                )
+
+                if len(actionable_targets) == 1:
+                    print(
+                        f"The aspiration level for {target_text} "
+                        "can still be improved."
+                    )
+                else:
+                    print(
+                        f"The aspiration levels for {target_text} "
+                        "can still be improved."
+                    )
+
+            if rival_members and not actionable_rivals:
+                rival_text = display_members(
+                    rival_members
+                )
+
+                if len(rival_members) == 1:
+                    print(
+                        f"The relevant external aspiration level for "
+                        f"{rival_text} is already at its nadir value, "
+                        "so it cannot be impaired further."
+                    )
+                else:
+                    print(
+                        f"The relevant external aspiration levels for "
+                        f"{rival_text} are already at their nadir values, "
+                        "so they cannot be impaired further."
+                    )
+
+            elif actionable_rivals:
+                rival_text = display_members(
+                    actionable_rivals
+                )
+
+                if len(actionable_rivals) == 1:
+                    print(
+                        f"The aspiration level for {rival_text} "
+                        "can be impaired."
+                    )
+                else:
+                    print(
+                        f"The aspiration levels for {rival_text} "
+                        "can be impaired."
+                    )
+
+        
         owen_values = contents.get(
             "owen_values"
         )
