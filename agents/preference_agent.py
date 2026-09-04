@@ -414,10 +414,7 @@ class PreferenceAgent(Agent):
                     self.agent.AskTargets()
                 )
 
-            elif (
-                message_type
-                == "owen_explanation"
-            ):
+            elif message_type == "owen_explanation":
                 self.agent.waiting_for_explanation = (
                     False
                 )
@@ -633,6 +630,43 @@ class PreferenceAgent(Agent):
             print("Explanation")
             print("-" * 60)
             print(explanation)
+
+        non_actionable_targets = contents.get(
+            "non_actionable_target_members",
+            [],
+        )
+
+        if non_actionable_targets:
+            cleaned_targets = [
+                target.removeprefix("r_").removeprefix("s_")
+                for target in non_actionable_targets
+            ]
+
+            if len(cleaned_targets) == 1:
+                target_text = cleaned_targets[0]
+            else:
+                target_text = (
+                    "{"
+                    + ", ".join(cleaned_targets)
+                    + "}"
+                )
+
+            print()
+            print("Aspiration-level action")
+            print("-" * 60)
+
+            if len(cleaned_targets) == 1:
+                print(
+                    f"The aspiration level for {target_text} is "
+                    "already at or beyond its ideal value, so no "
+                    "further improvement of this aspiration is suggested."
+                )
+            else:
+                print(
+                    f"The aspiration levels for {target_text} are "
+                    "already at or beyond their ideal values, so no "
+                    "further improvement of these aspirations is suggested."
+                )
 
         owen_values = contents.get(
             "owen_values"

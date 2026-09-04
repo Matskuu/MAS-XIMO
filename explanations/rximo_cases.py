@@ -74,6 +74,8 @@ class RXIMOSuggestion:
     case_name: str
     reference_point_status: ReferencePointStatus
     target_members: tuple[str, ...]
+    actionable_target_members: tuple[str, ...]
+    non_actionable_target_members: tuple[str, ...]
     rival_members: tuple[str, ...]
     strongest_supporter_members: tuple[str, ...]
     strongest_rival_members: tuple[str, ...]
@@ -123,6 +125,74 @@ def target_input_members(target_symbols: list[str]) -> frozenset[str]:
         f"r_{clean_symbol(target)}"
         for target in target_symbols
     )
+
+
+def objective_index(
+    symbol: str,
+    objective_symbols: list[str],
+) -> int:
+    """Return the objective index corresponding to an R-XIMO symbol.
+
+    Args:
+        symbol (str): objective, reference point, or solution symbol.
+        objective_symbols (list[str]): objective symbols in problem order.
+
+    Returns:
+        int: index of the corresponding objective.
+
+    Raises:
+        ValueError: if the symbol does not correspond to an objective.
+    """
+    cleaned = clean_symbol(symbol)
+    cleaned_objectives = [
+        clean_symbol(objective)
+        for objective in objective_symbols
+    ]
+    return cleaned_objectives.index(cleaned)
+
+
+def actionable_target_members(
+    target_members: tuple[str, ...],
+    reference_point_min: np.ndarray,
+    ideal_min: np.ndarray,
+    objective_symbols: list[str],
+) -> tuple[str, ...]:
+    """Return target aspirations that can still be improved.
+
+    A target is actionable only when its aspiration is worse than its ideal
+    value in common minimization orientation. Aspirations already at or beyond
+    the ideal are omitted from the preference-change suggestion.
+
+    Args:
+        target_members (tuple[str, ...]): target reference point symbols.
+        reference_point_min (np.ndarray): reference point in common minimization
+            orientation.
+        ideal_min (np.ndarray): ideal objective vector in common minimization
+            orientation.
+        objective_symbols (list[str]): objective symbols in problem order.
+
+    Returns:
+        tuple[str, ...]: target members for which further aspiration improvement
+            is meaningful.
+    """
+    actionable = []
+
+    for target in target_members:
+        index = objective_index(
+            target,
+            objective_symbols,
+        )
+
+        aspiration = float(reference_point_min[index])
+        ideal = float(ideal_min[index])
+
+        if (
+            aspiration > ideal
+            and not np.isclose(aspiration, ideal)
+        ):
+            actionable.append(target)
+
+    return tuple(actionable)
 
 
 def classify_reference_point_status(
@@ -622,32 +692,40 @@ def generate_explanation(
 
 
 def generate_suggestion(
-    target_members: tuple[str, ...],
+    actionable_targets: tuple[str, ...],
     rival: CoalitionCandidate | None,
 ) -> str:
-    """Generate a preference-change suggestion for the target coalition.
+    """Generate an actionable preference-change suggestion.
 
     Args:
-        target_members: reference point components to improve.
+        actionable_targets: target reference point components whose aspirations
+            can still be improved.
         rival: external reference point coalition that may be impaired.
 
     Returns:
         Decision-maker-facing preference suggestion.
     """
-    target_text = format_members(target_members)
+    if actionable_targets:
+        target_text = format_members(actionable_targets)
 
-    if rival is None:
+        if rival is None:
+            return (
+                f"Try improving the aspiration levels for {target_text}. "
+                "No separate rival aspiration coalition was identified."
+            )
+
+        rival_text = format_members(rival.members)
+
         return (
-            f"Try improving the aspiration levels for {target_text}. "
-            "No separate rival aspiration coalition was identified."
+            f"Try improving the aspiration levels for {target_text} and "
+            f"impairing the aspiration levels for {rival_text}."
         )
 
-    rival_text = format_members(rival.members)
+    if rival is not None:
+        rival_text = format_members(rival.members)
+        return f"Try impairing the aspiration levels for {rival_text}."
 
-    return (
-        f"Try improving the aspiration levels for {target_text} and "
-        f"impairing the aspiration levels for {rival_text}."
-    )
+    return "No further aspiration-level adjustment was identified."
 
 
 def build_rximo_suggestion(
@@ -655,6 +733,9 @@ def build_rximo_suggestion(
     candidates: list[CoalitionCandidate],
     target_symbols: list[str],
     coalition_advantage_threshold: float,
+    reference_point_min: np.ndarray,
+    ideal_min: np.ndarray,
+    objective_symbols: list[str],
 ) -> RXIMOSuggestion:
     """Build a complete generalized R-XIMO suggestion.
 
@@ -665,6 +746,11 @@ def build_rximo_suggestion(
         target_symbols (list[str]): selected target output symbols.
         coalition_advantage_threshold (float): redundancy threshold for larger
         external coalitions.
+        reference_point_min (np.ndarray): reference point in common minimization
+            orientation.
+        ideal_min (np.ndarray): ideal objective vector in common minimization
+            orientation.
+        objective_symbols (list[str]): objective symbols in problem order.
 
     Returns:
         RXIMOSuggestion: selected case, relevant coalitions, explanation, and
@@ -675,6 +761,19 @@ def build_rximo_suggestion(
         f"r_{clean_symbol(target)}"
         for target in target_symbols
     )
+    actionable_targets = actionable_target_members(
+        target_members,
+        reference_point_min,
+        ideal_min,
+        objective_symbols,
+    )
+
+    non_actionable_targets = tuple(
+        target
+        for target in target_members
+        if target not in actionable_targets
+    )
+
     effects = summarize_effects(
         candidates,
         target_set,
@@ -692,6 +791,8 @@ def build_rximo_suggestion(
         case_name=case_name(number),
         reference_point_status=reference_point_status,
         target_members=target_members,
+        actionable_target_members=actionable_targets,
+        non_actionable_target_members=non_actionable_targets,
         rival_members=(
             tuple(rival.members)
             if rival is not None
@@ -714,7 +815,7 @@ def build_rximo_suggestion(
             effects,
         ),
         suggestion=generate_suggestion(
-            target_members,
+            actionable_targets,
             rival,
         ),
     )

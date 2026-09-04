@@ -184,6 +184,14 @@ class OwenExplanationService:
             "target_members": list(
                 suggestion.target_members
             ),
+            "actionable_target_members": [
+                clean_symbol(member)
+                for member in suggestion.actionable_target_members
+            ],
+            "non_actionable_target_members": [
+                clean_symbol(member)
+                for member in suggestion.non_actionable_target_members
+            ],
             "rival_members": list(
                 suggestion.rival_members
             ),

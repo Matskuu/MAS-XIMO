@@ -18,6 +18,8 @@ from explanations.rximo_cases import (
     classify_reference_point_status,
 )
 from explanations.utils import (
+    get_ideal_and_nadir_minimized,
+    get_objective_symbols,
     orient_objectives_from_minimize,
     orient_objectives_to_minimize,
 )
@@ -164,6 +166,10 @@ def generate_explanation_result(
         reference_point_original,
     )
 
+    ideal_min, _ = get_ideal_and_nadir_minimized(problem)
+
+    objective_symbols = get_objective_symbols(problem)
+
     solution_original = orient_objectives_from_minimize(
         problem,
         solution_min,
@@ -219,12 +225,13 @@ def generate_explanation_result(
     )
 
     suggestion = build_rximo_suggestion(
-        reference_point_status=reference_point_status,
-        candidates=candidates,
-        target_symbols=target_symbols,
-        coalition_advantage_threshold=(
-            coalition_advantage_threshold
-        ),
+        reference_point_status,
+        candidates,
+        target_symbols,
+        coalition_advantage_threshold,
+        reference_point_min,
+        ideal_min,
+        objective_symbols,
     )
 
     return ExplanationResult(
