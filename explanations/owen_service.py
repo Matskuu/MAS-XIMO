@@ -101,7 +101,7 @@ class OwenExplanationService:
         self,
         targets: list[str],
     ) -> list[str]:
-        """Convert objective symbols such as f_1 to s_f_1."""
+        """Convert raw objective symbols to surrogate output symbols."""
         normalized = []
 
         for target in targets:
@@ -110,7 +110,9 @@ class OwenExplanationService:
             if target in self.output_symbols:
                 normalized_target = target
 
-            elif target.startswith("f_"):
+            elif f"s_{target}" in self.output_symbols:
+                # Accept raw objective symbols regardless of naming style,
+                # e.g. both ``f_1`` and ``f1``.
                 normalized_target = f"s_{target}"
 
             else:
