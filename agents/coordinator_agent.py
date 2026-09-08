@@ -17,13 +17,16 @@ class CoordinatorAgent(Agent):
         super().__init__(jid, password, **kwargs)
 
         self.reference_point: list[float] | None = None
+        self.solution_original: list[float] | None = None
         self.solution_min: list[float] | None = None
         self.targets: list[str] | None = None
 
         self.latest_explanation: dict | None = None
+        self.latest_counterfactual: dict | None = None
 
         self.explanation_requested = False
         self.counterfactual_requested = False
+        self.opportunity_requested = False
 
     async def request_solution(
         self,
@@ -46,6 +49,54 @@ class CoordinatorAgent(Agent):
         )
 
         await behaviour.send(message)
+
+    async def request_opportunity_analysis(
+        self,
+        behaviour,
+        validation: dict,
+    ) -> None:
+        """Request analysis of non-target improvement opportunities."""
+        if self.opportunity_requested:
+            return
+
+        if (
+            not self.targets
+            or "original_solution_min" not in validation
+            or "adjusted_solution_min" not in validation
+        ):
+            return
+
+        message = Message(
+            to="opportunityagent@localhost",
+            body=json.dumps(
+                {
+                    "type": "analyse_opportunities",
+                    "targets": self.targets,
+                    "original_solution_original": validation[
+                        "original_solution_original"
+                    ],
+                    "adjusted_solution_original": validation[
+                        "adjusted_solution_original"
+                    ],
+                    "original_solution_min": validation[
+                        "original_solution_min"
+                    ],
+                    "adjusted_solution_min": validation[
+                        "adjusted_solution_min"
+                    ],
+                    "counterfactual_outcome": validation.get(
+                        "outcome_type"
+                    ),
+                }
+            ),
+            metadata={
+                "performative": "request"
+            },
+        )
+
+        await behaviour.send(message)
+
+        self.opportunity_requested = True
 
     async def request_explanation_if_ready(
         self,
@@ -101,6 +152,7 @@ class CoordinatorAgent(Agent):
                 {
                     "type": "validate_counterfactual",
                     "reference_point": self.reference_point,
+                    "solution_original": self.solution_original,
                     "solution_min": self.solution_min,
                     "targets": self.targets,
 
@@ -195,28 +247,38 @@ class CoordinatorAgent(Agent):
 
         await behaviour.send(message)
 
-    async def forward_validated_explanation(
+    async def forward_complete_explanation(
         self,
         behaviour,
-        validation: dict,
+        opportunity_analysis: dict,
     ) -> None:
-        """Combine the Owen explanation and validation for the DM."""
-        if self.latest_explanation is None:
+        """Send explanation, validation, and opportunities to the DM."""
+        if (
+            self.latest_explanation is None
+            or self.latest_counterfactual is None
+        ):
             print(
-                "Coordinator received counterfactual validation "
-                "without a stored Owen explanation."
+                "Coordinator cannot construct the complete "
+                "explanation because required information is missing."
             )
             return
 
         combined = {
             **self.latest_explanation,
-            "counterfactual": validation,
+            "counterfactual": (
+                self.latest_counterfactual
+            ),
+            "opportunities": (
+                opportunity_analysis
+            ),
         }
 
         response = Message(
             to="preferenceagent@localhost",
             body=json.dumps(combined),
-            metadata={"performative": "inform"},
+            metadata={
+                "performative": "inform"
+            },
         )
 
         await behaviour.send(response)
@@ -244,12 +306,15 @@ class CoordinatorAgent(Agent):
             if message_type == "reference_point":
                 self.agent.reference_point = contents["reference_point"]
 
+                self.agent.solution_original = None
                 self.agent.solution_min = None
                 self.agent.targets = None
                 self.agent.latest_explanation = None
+                self.agent.latest_counterfactual = None
 
                 self.agent.explanation_requested = False
                 self.agent.counterfactual_requested = False
+                self.agent.opportunity_requested = False
 
                 await self.agent.request_solution(self)
 
@@ -257,9 +322,11 @@ class CoordinatorAgent(Agent):
                 self.agent.targets = contents["targets"]
 
                 self.agent.latest_explanation = None
+                self.agent.latest_counterfactual = None
 
                 self.agent.explanation_requested = False
                 self.agent.counterfactual_requested = False
+                self.agent.opportunity_requested = False
 
                 await self.agent.request_explanation_if_ready(self)
 
@@ -276,6 +343,7 @@ class CoordinatorAgent(Agent):
                     )
                     return
 
+                self.agent.solution_original = contents["solution_original"]
                 self.agent.solution_min = contents["solution_min"]
 
                 # Forward the current decision solution to the preference agent.
@@ -315,7 +383,17 @@ class CoordinatorAgent(Agent):
             elif message_type == "counterfactual_validation":
                 self.agent.counterfactual_requested = False
 
-                await self.agent.forward_validated_explanation(
+                self.agent.latest_counterfactual = contents
+
+                await self.agent.request_opportunity_analysis(
+                    self,
+                    contents,
+                )
+
+            elif message_type == "opportunity_analysis":
+                self.agent.opportunity_requested = False
+
+                await self.agent.forward_complete_explanation(
                     self,
                     contents,
                 )

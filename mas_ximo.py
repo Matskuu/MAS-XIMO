@@ -9,6 +9,7 @@ from pathlib import Path
 import spade
 from agents.coordinator_agent import CoordinatorAgent
 from agents.counterfactual_agent import CounterfactualAgent
+from agents.opportunity_agent import OpportunityAgent
 from agents.owen_agent import OwenAgent
 from agents.preference_agent import PreferenceAgent
 from agents.solver_agent import SolverAgent
@@ -46,6 +47,12 @@ async def main():
         "coordinator",
     )
 
+    opportunity_agent = OpportunityAgent(
+        "opportunityagent@localhost",
+        "opportunityagent",
+        problem=problem,
+    )
+
     owen_agent = OwenAgent(
         "owenagent@localhost",
         "owenagent",
@@ -77,6 +84,10 @@ async def main():
         auto_register=True
     )
 
+    await opportunity_agent.start(
+        auto_register=True
+    )
+
     await owen_agent.start(
         auto_register=True
     )
@@ -94,6 +105,7 @@ async def main():
 
     finally:
         await preference_agent.stop()
+        await opportunity_agent.stop()
         await owen_agent.stop()
         await solver_agent.stop()
         await coordinator_agent.stop()

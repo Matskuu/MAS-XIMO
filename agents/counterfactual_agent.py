@@ -142,13 +142,12 @@ class CounterfactualAgent(Agent):
             self.agent.pending_requests[
                 request_id
             ] = {
-                "targets": contents[
-                    "targets"
-                ],
+                "targets": contents["targets"],
+                "original_solution_original": (
+                    contents["solution_original"]
+                ),
                 "original_solution_min": (
-                    contents[
-                        "solution_min"
-                    ]
+                    contents["solution_min"]
                 ),
                 "adjusted_reference_point": (
                     adjusted_reference_point
@@ -269,6 +268,26 @@ class CounterfactualAgent(Agent):
                         "counterfactual_validation"
                     ),
                     "request_id": request_id,
+                    "original_solution_original": (
+                        pending[
+                            "original_solution_original"
+                        ]
+                    ),
+                    "adjusted_solution_original": (
+                        contents[
+                            "solution_original"
+                        ]
+                    ),
+                    "original_solution_min": (
+                        pending[
+                            "original_solution_min"
+                        ]
+                    ),
+                    "adjusted_solution_min": (
+                        contents[
+                            "solution_min"
+                        ]
+                    ),
                 }
             )
 

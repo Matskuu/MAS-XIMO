@@ -439,6 +439,25 @@ class PreferenceAgent(Agent):
                     f"'{message_type}'."
                 )
 
+    def format_symbol_list(
+        self,
+        symbols: list[str],
+    ) -> str:
+        """Format objective symbols for DM-facing text."""
+        if len(symbols) == 1:
+            return symbols[0]
+
+        if len(symbols) == 2:
+            return (
+                f"{symbols[0]} and "
+                f"{symbols[1]}"
+            )
+
+        return (
+            ", ".join(symbols[:-1])
+            + f", and {symbols[-1]}"
+        )
+
     def display_suggestion(
         self,
         contents: dict,
@@ -500,10 +519,17 @@ class PreferenceAgent(Agent):
             )
 
             if outcome == "joint_improvement":
-                print(
-                    "The suggested preference change improved "
-                    "all selected target objectives in the RPM check."
-                )
+                if len(targets) == 1:
+                    print(
+                        f"The suggested preference change improved "
+                        f"{targets[0]} in the RPM check."
+                    )
+                else:
+                    print(
+                        "The suggested preference change improved "
+                        "all selected target objectives together "
+                        "in the RPM check."
+                    )
 
             elif outcome == "partial_improvement":
                 print(
@@ -581,6 +607,39 @@ class PreferenceAgent(Agent):
                         "The tested preference change produced "
                         "no meaningful change in the selected targets."
                     )
+
+        opportunity_result = contents.get(
+            "opportunities"
+        )
+
+        if opportunity_result:
+            opportunities = (
+                opportunity_result.get(
+                    "opportunities",
+                    [],
+                )
+            )
+
+            if opportunities:
+                symbols = [
+                    opportunity["symbol"]
+                    for opportunity in opportunities
+                ]
+
+                target_text = (
+                    "selected target"
+                    if len(targets) == 1
+                    else "selected targets"
+                )
+
+                print()
+                print("Additional opportunity")
+                print("-" * 60)
+                print(
+                    f"In addition to the {target_text}, "
+                    f"{self.format_symbol_list(symbols)} also improved "
+                    "under the tested preference change."
+                )
 
         print()
 
@@ -845,6 +904,37 @@ class PreferenceAgent(Agent):
                 print(
                     "Counterfactual reference point: "
                     f"{adjusted_reference_point}"
+                )
+
+        opportunity_result = contents.get(
+            "opportunities"
+        )
+
+        if opportunity_result:
+            opportunities = (
+                opportunity_result.get(
+                    "opportunities",
+                    [],
+                )
+            )
+
+            print()
+            print("Additional objective opportunities")
+            print("-" * 60)
+
+            if opportunities:
+                for opportunity in opportunities:
+                    print(
+                        f"{opportunity['symbol']}: "
+                        f"{float(opportunity['original_value']):.6f} "
+                        "-> "
+                        f"{float(opportunity['adjusted_value']):.6f} "
+                        "(improved)"
+                    )
+            else:
+                print(
+                    "No additional compatible non-target "
+                    "improvements were identified."
                 )
 
         print()
