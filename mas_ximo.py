@@ -7,14 +7,12 @@ import multiprocessing
 from pathlib import Path
 
 import spade
-
 from agents.coordinator_agent import CoordinatorAgent
 from agents.counterfactual_agent import CounterfactualAgent
 from agents.owen_agent import OwenAgent
 from agents.preference_agent import PreferenceAgent
 from agents.solver_agent import SolverAgent
 from problem_setup import create_problem
-
 
 DATA_PATH = (
     Path(__file__).resolve().parent

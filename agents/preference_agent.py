@@ -5,12 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 
+from explanations.utils import get_objective_symbols
 from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour, OneShotBehaviour
 from spade.message import Message
 from spade.template import Template
-
-from explanations.utils import get_objective_symbols
 
 
 class PreferenceAgent(Agent):
