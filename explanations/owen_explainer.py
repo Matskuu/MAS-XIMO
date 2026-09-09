@@ -35,7 +35,11 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 
-def make_default_surrogate(random_state: int = 1, surrogate_type: str = "random_forest"):
+def make_default_surrogate(
+    random_state: int = 1,
+    surrogate_type: str = "random_forest",
+    gp_config: str = "bounded_restarts",
+):
     """Construct a default multi-output surrogate model.
 
     Args:
@@ -43,6 +47,11 @@ def make_default_surrogate(random_state: int = 1, surrogate_type: str = "random_
         to 1.
         surrogate_type (str, optional): either ``"random_forest"`` or
         ``"gaussian_process"``. Defaults to ``"random_forest"``.
+        gp_config (str, optional): Gaussian-process configuration. ``"current"``
+        reproduces the existing model, ``"bounded"`` prevents the RBF length
+        scale from collapsing below 0.05, and ``"bounded_restarts"`` uses the
+        same bounds with five optimizer restarts. Ignored for random forests.
+        Defaults to ``"bounded_restarts"``.
 
     Raises:
         ValueError: the requested surrogate type is not supported.
@@ -61,9 +70,30 @@ def make_default_surrogate(random_state: int = 1, surrogate_type: str = "random_
         )
 
     if surrogate_type == "gaussian_process":
+        gp_configs = {
+            "current": {
+                "length_scale_bounds": (1e-3, 1e3),
+                "n_restarts_optimizer": 0,
+            },
+            "bounded": {
+                "length_scale_bounds": (5e-2, 1e2),
+                "n_restarts_optimizer": 0,
+            },
+            "bounded_restarts": {
+                "length_scale_bounds": (5e-2, 1e2),
+                "n_restarts_optimizer": 5,
+            },
+        }
+        if gp_config not in gp_configs:
+            raise ValueError(
+                f"Unknown gp_config: {gp_config}. "
+                "Use 'current', 'bounded', or 'bounded_restarts'."
+            )
+
+        config = gp_configs[gp_config]
         kernel = (
             ConstantKernel(1.0, (1e-3, 1e3))
-            * RBF(1.0, (1e-3, 1e3))
+            * RBF(1.0, config["length_scale_bounds"])
             + WhiteKernel(1e-5, (1e-8, 1e-1))
         )
         base_model = make_pipeline(
@@ -72,7 +102,7 @@ def make_default_surrogate(random_state: int = 1, surrogate_type: str = "random_
                 kernel=kernel,
                 alpha=1e-8,
                 normalize_y=True,
-                n_restarts_optimizer=0,
+                n_restarts_optimizer=config["n_restarts_optimizer"],
                 random_state=random_state,
             ),
         )

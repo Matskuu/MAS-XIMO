@@ -41,6 +41,10 @@ class ObjectiveFidelityMetrics:
     mean_normalized_mae: float
     max_normalized_mae: float
     correlation: float
+    actual_std: float
+    predicted_std: float
+    actual_range: float
+    predicted_range: float
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,10 @@ class FidelityMetrics:
     mean_utility_abs_error: float
     max_utility_abs_error: float
     utility_correlation: float
+    actual_utility_std: float
+    predicted_utility_std: float
+    actual_utility_range: float
+    predicted_utility_range: float
     objective_metrics: tuple[ObjectiveFidelityMetrics, ...]
 
 
@@ -100,10 +108,16 @@ def target_utility_from_outputs(
     return np.asarray(-asf_value if explainer.minimize else asf_value, dtype=float)
 
 
-def objective_ranges(data: pl.DataFrame, output_symbols: list[str]) -> np.ndarray:
-    """Return nonzero observed output ranges for normalized error metrics."""
-    values = data[output_symbols].to_numpy()
-    ranges = np.ptp(values, axis=0)
+def objective_ranges(problem) -> np.ndarray:
+    """Return ideal--nadir ranges for normalized objective-error metrics.
+
+    Using the problem's objective ranges keeps the normalization meaningful
+    when RPM solutions are nearly constant in one objective. In particular,
+    it avoids dividing tiny prediction errors by an even smaller observed
+    solution range.
+    """
+    ideal_min, nadir_min = get_ideal_and_nadir_minimized(problem)
+    ranges = np.abs(np.asarray(nadir_min, dtype=float) - np.asarray(ideal_min, dtype=float))
     return np.where(np.isclose(ranges, 0.0), 1.0, ranges)
 
 
@@ -143,6 +157,10 @@ def compute_fidelity_metrics(
             correlation=correlation_or_nan(
                 actual_outputs[:, index], predicted_outputs[:, index]
             ),
+            actual_std=float(np.std(actual_outputs[:, index])),
+            predicted_std=float(np.std(predicted_outputs[:, index])),
+            actual_range=float(np.ptp(actual_outputs[:, index])),
+            predicted_range=float(np.ptp(predicted_outputs[:, index])),
         )
         for index in range(actual_outputs.shape[1])
     )
@@ -155,6 +173,10 @@ def compute_fidelity_metrics(
         mean_utility_abs_error=float(np.mean(utility_error)),
         max_utility_abs_error=float(np.max(utility_error)),
         utility_correlation=correlation_or_nan(actual_utility, predicted_utility),
+        actual_utility_std=float(np.std(actual_utility)),
+        predicted_utility_std=float(np.std(predicted_utility)),
+        actual_utility_range=float(np.ptp(actual_utility)),
+        predicted_utility_range=float(np.ptp(predicted_utility)),
         objective_metrics=per_objective,
     )
 
@@ -176,6 +198,7 @@ def build_validation_explainer(
     output_symbols: list[str],
     target_symbols: list[str],
     surrogate_type: str,
+    gp_config: str,
     seed: int,
     background_size: int,
 ) -> MultiTargetOwenExplainer:
@@ -183,6 +206,7 @@ def build_validation_explainer(
     surrogate = make_default_surrogate(
         random_state=seed,
         surrogate_type=surrogate_type,
+        gp_config=gp_config,
     )
     surrogate.fit(
         train_data[input_symbols].to_numpy(),
@@ -341,6 +365,13 @@ def owen_reconstruction(
     return rows
 
 
+def format_correlation(value: float) -> str:
+    """Format correlation while making near-constant vectors explicit."""
+    if np.isnan(value):
+        return "n/a (near-constant)"
+    return f"{value:.6g}"
+
+
 def print_metrics(
     prefix: str,
     metrics: FidelityMetrics,
@@ -353,7 +384,7 @@ def print_metrics(
     print(f"  mean normalized solution MAE:   {metrics.mean_normalized_solution_mae:.6g}")
     print(f"  max normalized solution MAE:    {metrics.max_normalized_solution_mae:.6g}")
 
-    print("  per-objective fidelity:")
+    print("  per-objective fidelity (normalized by ideal--nadir range):")
     for symbol, objective in zip(
         objective_symbols, metrics.objective_metrics, strict=True
     ):
@@ -361,17 +392,130 @@ def print_metrics(
         print(
             f"    {display_symbol}: mean MAE={objective.mean_mae:.6g}, "
             f"mean normalized MAE={objective.mean_normalized_mae:.6g}, "
-            f"correlation={objective.correlation:.6g}"
+            f"correlation={format_correlation(objective.correlation)}"
         )
         print(
             f"       max MAE={objective.max_mae:.6g}, "
             f"max normalized MAE={objective.max_normalized_mae:.6g}"
         )
+        print(
+            f"       actual std={objective.actual_std:.6g}, "
+            f"predicted std={objective.predicted_std:.6g}"
+        )
+        print(
+            f"       actual range={objective.actual_range:.6g}, "
+            f"predicted range={objective.predicted_range:.6g}"
+        )
 
     print(f"  mean target-utility abs error:  {metrics.mean_utility_abs_error:.6g}")
     print(f"  max target-utility abs error:   {metrics.max_utility_abs_error:.6g}")
-    print(f"  target-utility correlation:     {metrics.utility_correlation:.6g}")
+    print(
+        "  target-utility correlation:     "
+        f"{format_correlation(metrics.utility_correlation)}"
+    )
+    print(
+        f"  target-utility actual std:      {metrics.actual_utility_std:.6g}"
+    )
+    print(
+        f"  target-utility predicted std:   {metrics.predicted_utility_std:.6g}"
+    )
+    print(
+        f"  target-utility actual range:    {metrics.actual_utility_range:.6g}"
+    )
+    print(
+        f"  target-utility predicted range: {metrics.predicted_utility_range:.6g}"
+    )
 
+
+
+def _format_array(values) -> str:
+    """Format scalar or array-valued learned hyperparameters compactly."""
+    array = np.asarray(values, dtype=float)
+    if array.ndim == 0:
+        return f"{float(array):.6g}"
+    return "[" + ", ".join(f"{value:.6g}" for value in array.reshape(-1)) + "]"
+
+
+def print_surrogate_diagnostics(
+    explainer: MultiTargetOwenExplainer,
+    output_symbols: list[str],
+    surrogate_type: str,
+) -> None:
+    """Print fitted-model diagnostics for each surrogate output.
+
+    For Gaussian-process surrogates, this exposes the optimized kernel, its
+    principal learned hyperparameters, the log-marginal likelihood, and the
+    output normalization statistics. These values are useful for detecting
+    degenerate fits in which an output model collapses to an almost constant
+    predictor.
+    """
+    print("\nSURROGATE MODEL DIAGNOSTICS")
+    print("-" * 60)
+
+    if surrogate_type != "gaussian_process":
+        print("  Detailed kernel diagnostics are only available for gaussian_process.")
+        return
+
+    model = explainer.surrogate_model
+    estimators = getattr(model, "estimators_", None)
+    if estimators is None:
+        print("  Fitted per-output estimators are unavailable.")
+        return
+
+    for symbol, estimator in zip(output_symbols, estimators, strict=True):
+        display_symbol = symbol.removeprefix("s_")
+        named_steps = getattr(estimator, "named_steps", {})
+        gp = named_steps.get("gaussianprocessregressor")
+        scaler = named_steps.get("standardscaler")
+
+        print(f"  {display_symbol}:")
+        if gp is None:
+            print(f"    estimator: {estimator!r}")
+            continue
+
+        kernel = getattr(gp, "kernel_", None)
+        if kernel is None:
+            print("    fitted kernel: unavailable")
+            continue
+
+        print(f"    fitted kernel: {kernel}")
+
+        try:
+            print(
+                "    constant value: "
+                f"{_format_array(kernel.k1.k1.constant_value)}"
+            )
+            print(
+                "    RBF length scale: "
+                f"{_format_array(kernel.k1.k2.length_scale)}"
+            )
+            print(
+                "    white-noise level: "
+                f"{_format_array(kernel.k2.noise_level)}"
+            )
+        except AttributeError:
+            print(
+                "    optimized theta (log-space): "
+                f"{_format_array(kernel.theta)}"
+            )
+
+        lml = getattr(gp, "log_marginal_likelihood_value_", None)
+        if lml is not None:
+            print(f"    log-marginal likelihood: {float(lml):.6g}")
+
+        y_mean = getattr(gp, "_y_train_mean", None)
+        y_std = getattr(gp, "_y_train_std", None)
+        if y_mean is not None and y_std is not None:
+            print(
+                "    y normalization: "
+                f"mean={_format_array(y_mean)}, std={_format_array(y_std)}"
+            )
+
+        if scaler is not None and hasattr(scaler, "scale_"):
+            print(
+                "    input scaler scale: "
+                f"{_format_array(scaler.scale_)}"
+            )
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -388,6 +532,17 @@ def parse_args() -> argparse.Namespace:
         "--surrogate-type",
         choices=("gaussian_process", "random_forest"),
         default="gaussian_process",
+    )
+    parser.add_argument(
+        "--gp-config",
+        choices=("current", "bounded", "bounded_restarts"),
+        default="current",
+        help=(
+            "Gaussian-process configuration. 'current' uses the existing "
+            "length-scale bounds and no restarts; 'bounded' uses "
+            "length_scale_bounds=(0.05, 100) with no restarts; "
+            "'bounded_restarts' uses the same bounds with five restarts."
+        ),
     )
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--samples", type=int, default=300)
@@ -461,6 +616,8 @@ def main() -> None:
     print(f"Dataset:          {data_path}")
     print(f"Targets:          {', '.join(raw_targets)}")
     print(f"Surrogate:        {args.surrogate_type}")
+    if args.surrogate_type == "gaussian_process":
+        print(f"GP config:        {args.gp_config}")
     print(f"Training samples: {train_data.height}")
     print(f"Held-out samples: {test_data.height}")
     print(f"SHAP background:  {min(args.background_size, train_data.height)}")
@@ -471,11 +628,17 @@ def main() -> None:
         output_symbols=output_symbols,
         target_symbols=target_symbols,
         surrogate_type=args.surrogate_type,
+        gp_config=args.gp_config,
         seed=args.seed,
         background_size=args.background_size,
     )
+    print_surrogate_diagnostics(
+        explainer=explainer,
+        output_symbols=output_symbols,
+        surrogate_type=args.surrogate_type,
+    )
 
-    ranges = objective_ranges(train_data, output_symbols)
+    ranges = objective_ranges(problem)
 
     test_inputs = test_data[input_symbols].to_numpy()
     test_actual = test_data[output_symbols].to_numpy()
