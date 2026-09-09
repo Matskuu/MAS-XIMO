@@ -23,6 +23,7 @@ from explanations.counterfactual_validation import (
     evaluate_counterfactual_solution,
     outcome_to_dict,
 )
+from explanations.owen_explainer import MultiTargetOwenExplainer
 from explanations.owen_service import OwenExplanationService
 from explanations.utils import (
     get_objective_symbols,
@@ -90,6 +91,126 @@ def parse_target_sets(raw_sets: list[str] | None, objective_symbols: list[str]) 
     return parsed
 
 
+
+def target_utility_from_outputs(
+    explainer: MultiTargetOwenExplainer,
+    outputs: np.ndarray,
+) -> np.ndarray:
+    """Evaluate the explainer target utility from supplied objective vectors.
+
+    Unlike ``evaluate_target_coalition``, this helper does not call the
+    surrogate. It applies the same normalization, weights, and ASF directly
+    to supplied RPM solution objective vectors in minimization orientation.
+    """
+    outputs = np.atleast_2d(np.asarray(outputs, dtype=float))
+    targets = outputs[:, explainer.target_indices]
+
+    if explainer.normalize_targets:
+        targets = (targets - explainer.target_mins) / explainer.target_ranges
+
+    weighted_targets = targets * explainer.weights
+    asf_value = np.max(weighted_targets, axis=1) + explainer.asf_rho * np.sum(
+        weighted_targets, axis=1
+    )
+    return np.asarray(
+        -asf_value if explainer.minimize else asf_value,
+        dtype=float,
+    ).reshape(-1)
+
+
+def build_utility_explainer(
+    service: OwenExplanationService,
+    targets: list[str],
+) -> MultiTargetOwenExplainer:
+    """Construct the utility definition used by the Owen explanation.
+
+    SHAP setup is intentionally skipped because this object is only used to
+    evaluate the same target-coalition utility directly on actual RPM outputs.
+    """
+    target_symbols = service._normalize_targets(targets)
+    return MultiTargetOwenExplainer(
+        problem_data=service.data,
+        input_symbols=service.input_symbols,
+        output_symbols=service.output_symbols,
+        target_symbols=target_symbols,
+        weights=None,
+        minimize=True,
+        normalize_targets=True,
+        asf_rho=1e-6,
+        surrogate_model=service.surrogate,
+        random_state=service.seed,
+        fit_surrogate=False,
+    )
+
+
+def classify_coalition_utility_change(
+    change: float,
+    tolerance: float,
+) -> str:
+    """Classify whether the actual RPM target-coalition utility changed."""
+    if change > tolerance:
+        return "coalition_utility_improved"
+    if change < -tolerance:
+        return "coalition_utility_worsened"
+    return "coalition_utility_unchanged"
+
+
+def normalized_target_changes(
+    changes: list[dict],
+    objective_symbols: list[str],
+    objective_ranges: np.ndarray,
+) -> list[dict]:
+    """Add ideal--nadir-normalized signed changes to target outcomes."""
+    index_by_symbol = {symbol: i for i, symbol in enumerate(objective_symbols)}
+    enriched = []
+    for change in changes:
+        item = dict(change)
+        symbol = item["symbol"]
+        index = index_by_symbol[symbol]
+        scale = float(objective_ranges[index])
+        item["normalized_improvement"] = (
+            float(item["signed_improvement"]) / scale if scale > 0.0 else 0.0
+        )
+        enriched.append(item)
+    return enriched
+
+
+def reference_point_changes(
+    objective_symbols: list[str],
+    input_symbols: list[str],
+    original_reference: np.ndarray,
+    adjusted_reference: np.ndarray,
+    actionable_targets: list[str],
+    selected_rivals: list[str],
+) -> list[dict]:
+    """Describe how the counterfactual construction changed each aspiration."""
+    target_set = set(actionable_targets)
+    rival_set = set(selected_rivals)
+    changes = []
+    for index, symbol in enumerate(objective_symbols):
+        input_symbol = input_symbols[index]
+        if input_symbol in target_set:
+            role = "target"
+        elif input_symbol in rival_set:
+            role = "rival"
+        else:
+            role = "unchanged"
+
+        original = float(original_reference[index])
+        adjusted = float(adjusted_reference[index])
+        changes.append(
+            {
+                "symbol": symbol,
+                "input_symbol": input_symbol,
+                "original": original,
+                "adjusted": adjusted,
+                "change": adjusted - original,
+                "role": role,
+            }
+        )
+    return changes
+
+
 def json_text(value) -> str:
     """Serialize nested explanation content safely for CSV output."""
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
@@ -144,6 +265,12 @@ def main() -> None:
         default=list(PROFILE_FRACTIONS),
     )
     parser.add_argument("--counterfactual-step", type=float, default=0.10)
+    parser.add_argument(
+        "--utility-tolerance",
+        type=float,
+        default=1e-6,
+        help="Tolerance for classifying target-coalition utility changes.",
+    )
     parser.add_argument("--coalition-advantage-threshold", type=float, default=0.05)
     parser.add_argument(
         "--output",
@@ -156,6 +283,14 @@ def main() -> None:
     problem = create_problem(args.problem)
     objective_symbols = get_objective_symbols(problem)
     profiles = reference_profiles(problem)
+    ideal = np.asarray([float(obj.ideal) for obj in problem.objectives], dtype=float)
+    nadir = np.asarray([float(obj.nadir) for obj in problem.objectives], dtype=float)
+    objective_range_values = np.abs(ideal - nadir)
+    objective_range_values = np.where(
+        np.isclose(objective_range_values, 0.0),
+        1.0,
+        objective_range_values,
+    )
     target_sets = parse_target_sets(args.target_sets, objective_symbols)
     background_path = ensure_background(args.problem, args.samples, args.seed)
 
@@ -181,6 +316,7 @@ def main() -> None:
 
     for targets in target_sets:
         target_label = "+".join(targets)
+        utility_explainer = build_utility_explainer(service, targets)
         print(f"\nTargets: {target_label}")
         print("-" * 68)
 
@@ -222,6 +358,37 @@ def main() -> None:
                 )
                 outcome_dict = outcome_to_dict(outcome)
 
+                original_target_utility = float(
+                    target_utility_from_outputs(utility_explainer, solution_min)[0]
+                )
+                adjusted_target_utility = float(
+                    target_utility_from_outputs(
+                        utility_explainer,
+                        adjusted_solution_min,
+                    )[0]
+                )
+                target_utility_change = (
+                    adjusted_target_utility - original_target_utility
+                )
+                coalition_outcome = classify_coalition_utility_change(
+                    target_utility_change,
+                    args.utility_tolerance,
+                )
+
+                enriched_target_changes = normalized_target_changes(
+                    outcome_dict["changes"],
+                    objective_symbols,
+                    objective_range_values,
+                )
+                rp_changes = reference_point_changes(
+                    objective_symbols,
+                    service.input_symbols,
+                    reference_original,
+                    adjusted_reference,
+                    actionable_targets,
+                    selected_rivals,
+                )
+
                 solution_original = orient_objectives_from_minimize(problem, solution_min)
                 adjusted_solution_original = orient_objectives_from_minimize(
                     problem, adjusted_solution_min
@@ -236,6 +403,7 @@ def main() -> None:
                 print(
                     f"{profile_name:11s} case={explanation['case_number']} "
                     f"outcome={outcome.outcome_type:19s} "
+                    f"coalition={coalition_outcome:28s} "
                     f"targets={','.join(targets)}"
                 )
 
@@ -259,7 +427,15 @@ def main() -> None:
                     "improved_targets": json_text(outcome_dict["improved_targets"]),
                     "worsened_targets": json_text(outcome_dict["worsened_targets"]),
                     "unchanged_targets": json_text(outcome_dict["unchanged_targets"]),
-                    "target_changes": json_text(outcome_dict["changes"]),
+                    "target_changes": json_text(enriched_target_changes),
+                    "reference_point_changes": json_text(rp_changes),
+                    "original_target_utility": original_target_utility,
+                    "adjusted_target_utility": adjusted_target_utility,
+                    "target_utility_change": target_utility_change,
+                    "target_utility_improved": (
+                        target_utility_change > args.utility_tolerance
+                    ),
+                    "coalition_outcome": coalition_outcome,
                     "owen_values": json_text(owen_values),
                     "coalition_contributions": json_text(
                         explanation["coalition_contributions"]
@@ -298,6 +474,12 @@ def main() -> None:
                         "worsened_targets": "[]",
                         "unchanged_targets": "[]",
                         "target_changes": "[]",
+                        "reference_point_changes": "[]",
+                        "original_target_utility": None,
+                        "adjusted_target_utility": None,
+                        "target_utility_change": None,
+                        "target_utility_improved": False,
+                        "coalition_outcome": "failed",
                         "owen_values": "[]",
                         "coalition_contributions": "[]",
                         "error": str(error),
@@ -332,6 +514,15 @@ def main() -> None:
             .sort(["target_count", "case_number", "counterfactual_outcome"])
         )
         print(summary)
+
+    if successful.height:
+        print("\nCOALITION UTILITY OUTCOME COUNTS")
+        print("-" * 68)
+        print(
+            successful.group_by("coalition_outcome")
+            .len()
+            .sort("len", descending=True)
+        )
 
     print(f"\nSaved evaluation results to: {output}")
 
