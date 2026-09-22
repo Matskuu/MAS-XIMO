@@ -1,13 +1,18 @@
 """Generalized R-XIMO case classification for multi-target explanations.
 
-This module converts direct input-coalition contributions into supporting,
-impairing, and neutral effects and uses them to classify a reference
-point--solution pair according to a generalized version of the nine R-XIMO
-explanation situations.
+This module uses individual Owen attribution effects to classify a
+reference point--solution pair according to a generalized version of the
+nine R-XIMO explanation situations. The selected target objectives are
+represented by their aggregate Owen attribution, while objectives outside
+the target set are represented by their individual Owen values.
+
+Direct coalition effects are used only for optional pairwise interaction
+analysis. A meaningful interaction can refine an Owen-based individual
+rival into a jointly considered rival pair.
 
 The module contains no command-line interaction or optimization calls. Its
-functions operate on already computed reference points, solutions, and
-coalition-contribution tables.
+functions operate on already computed reference points, solutions, Owen
+values, and interaction diagnostics.
 """
 
 from __future__ import annotations
@@ -17,7 +22,6 @@ from typing import Literal
 
 import numpy as np
 import polars as pl
-
 
 ReferencePointStatus = Literal["too_demanding", "pessimistic", "mixed"]
 
@@ -57,6 +61,40 @@ class CoalitionCandidate:
 
 
 @dataclass(frozen=True)
+class OwenEffect:
+    """Store one individual Owen attribution effect."""
+
+    member: str
+    owen_value: float
+    role: CoalitionRole
+    is_target: bool
+
+
+@dataclass(frozen=True)
+class OwenEffectSummary:
+    """Store Owen effects used for generalized R-XIMO reasoning."""
+
+    effects: tuple[OwenEffect, ...]
+    target_effect: float
+    target_role: CoalitionRole
+    external_supporters: tuple[OwenEffect, ...]
+    external_rivals: tuple[OwenEffect, ...]
+    strongest_external_supporter: OwenEffect | None
+    weakest_external_supporter: OwenEffect | None
+    strongest_external_rival: OwenEffect | None
+
+
+@dataclass(frozen=True)
+class RivalInteraction:
+    """Store an interaction between two Owen-identified rivals."""
+
+    members: tuple[str, str]
+    interaction: float
+    relative_interaction: float
+    pair_contribution: float
+
+
+@dataclass(frozen=True)
 class EffectSummary:
     """Store the retained supporting and impairing coalition effects."""
     strongest_supporter: CoalitionCandidate | None
@@ -84,6 +122,59 @@ class RXIMOSuggestion:
     strongest_rival_members: tuple[str, ...]
     explanation: str
     suggestion: str
+
+
+def select_rival_interaction(
+    interaction_summary: pl.DataFrame,
+    external_rivals: tuple[OwenEffect, ...],
+    selected_rival: str,
+    *,
+    interaction_tolerance: float = 1e-6,
+    relative_threshold: float = 0.15,
+) -> RivalInteraction | None:
+    """Select the strongest meaningful interaction between rivals."""
+
+    rival_members = {
+        effect.member
+        for effect in external_rivals
+    }
+
+    qualifying: list[RivalInteraction] = []
+
+    for row in interaction_summary.to_dicts():
+        members = tuple(row["members"])
+
+        if not set(members).issubset(rival_members):
+            continue
+
+        if selected_rival not in members:
+            continue
+
+        interaction = float(row["interaction"])
+        relative = float(row["relative_interaction"])
+
+        if (
+            interaction < -interaction_tolerance
+            and relative >= relative_threshold
+        ):
+            qualifying.append(
+                RivalInteraction(
+                    members=members,
+                    interaction=interaction,
+                    relative_interaction=relative,
+                    pair_contribution=float(
+                        row["pair_contribution"]
+                    ),
+                )
+            )
+
+    if not qualifying:
+        return None
+
+    return min(
+        qualifying,
+        key=lambda candidate: candidate.interaction,
+    )
 
 
 def clean_symbol(symbol: str) -> str:
@@ -127,6 +218,137 @@ def target_input_members(target_symbols: list[str]) -> frozenset[str]:
     return frozenset(
         f"r_{clean_symbol(target)}"
         for target in target_symbols
+    )
+
+
+def summarize_owen_effects(
+    owen_summary: pl.DataFrame,
+    target_symbols: list[str],
+    tolerance: float = 1e-12,
+) -> OwenEffectSummary:
+    """Summarize individual effects derived from Owen values.
+
+    Negative Owen values represent impairing effects on the
+    higher-is-better target utility, while positive Owen values
+    represent supporting effects.
+
+    Args:
+        owen_summary: Owen-value table containing ``input`` and
+            ``owen_value`` columns.
+        target_symbols: selected target objective symbols.
+        tolerance: absolute threshold for neutral Owen effects.
+
+    Returns:
+        Individual Owen effects and the strongest or weakest
+        effects needed for generalized R-XIMO reasoning.
+    """
+    target_set = target_input_members(target_symbols)
+
+    effects: list[OwenEffect] = []
+
+    for row in owen_summary.to_dicts():
+        member = str(row["input"])
+        value = float(row["owen_value"])
+
+        if value > tolerance:
+            role: CoalitionRole = "supporter"
+        elif value < -tolerance:
+            role = "rival"
+        else:
+            role = "neutral"
+
+        effects.append(
+            OwenEffect(
+                member=member,
+                owen_value=value,
+                role=role,
+                is_target=member in target_set,
+            )
+        )
+
+    target_effects = [
+        effect
+        for effect in effects
+        if effect.is_target
+    ]
+
+    target_effect = sum(
+        effect.owen_value
+        for effect in target_effects
+    )
+
+    if target_effect > tolerance:
+        target_role: CoalitionRole = "supporter"
+    elif target_effect < -tolerance:
+        target_role = "rival"
+    else:
+        target_role = "neutral"
+
+    supporters = [
+        effect
+        for effect in effects
+        if effect.role == "supporter"
+    ]
+
+    rivals = [
+        effect
+        for effect in effects
+        if effect.role == "rival"
+    ]
+
+    external_supporters = [
+        effect
+        for effect in supporters
+        if not effect.is_target
+    ]
+
+    external_rivals = [
+        effect
+        for effect in rivals
+        if not effect.is_target
+    ]
+
+    return OwenEffectSummary(
+        effects=tuple(effects),
+        target_effect=target_effect,
+        target_role=target_role,
+        external_supporters=tuple(
+            sorted(
+                external_supporters,
+                key=lambda effect: effect.owen_value,
+                reverse=True,
+            )
+        ),
+        external_rivals=tuple(
+            sorted(
+                external_rivals,
+                key=lambda effect: effect.owen_value,
+            )
+        ),
+        strongest_external_supporter=(
+            max(
+                external_supporters,
+                key=lambda effect: effect.owen_value,
+            )
+            if external_supporters
+            else None
+        ),
+        weakest_external_supporter=(
+            min(
+                external_supporters,
+                key=lambda effect: effect.owen_value,
+            )
+            if external_supporters
+            else None
+        ),
+        strongest_external_rival=(
+            min(
+                external_rivals,
+                key=lambda effect: effect.owen_value,
+            )
+            if external_rivals
+            else None
+        ),
     )
 
 
@@ -546,45 +768,88 @@ def summarize_effects(
 
 def classify_rximo_case(
     reference_point_status: ReferencePointStatus,
-    effects: EffectSummary,
-    target_set: frozenset[str],
+    effects: OwenEffectSummary,
+    tolerance: float = 1e-12,
 ) -> int:
-    """Generalized implementation of the nine Table 1 situations."""
-    best = effects.strongest_supporter
-    worst = effects.strongest_rival
-    weakest = effects.weakest_supporter
+    """Classify a generalized R-XIMO case from Owen effects.
 
-    target_is_best = (
-        best is not None
-        and best.member_set == target_set
+    The selected target objectives are represented by their aggregate
+    Owen attribution, while objectives outside the target set are
+    represented by their individual Owen values.
+
+    Args:
+        reference_point_status: classified aspiration pattern.
+        effects: Owen-effect summary for the selected target set.
+        tolerance: numerical tolerance for comparing Owen effects.
+
+    Returns:
+        Generalized R-XIMO case number from 1 to 9.
+    """
+    target_effect = effects.target_effect
+
+    strongest_external_supporter = (
+        effects.strongest_external_supporter
+    )
+    weakest_external_supporter = (
+        effects.weakest_external_supporter
+    )
+    strongest_external_rival = (
+        effects.strongest_external_rival
     )
 
-    target_is_worst = (
-        worst is not None
-        and worst.member_set == target_set
+    target_is_strongest_supporter = (
+        effects.target_role == "supporter"
+        and (
+            strongest_external_supporter is None
+            or target_effect
+            > strongest_external_supporter.owen_value + tolerance
+        )
+    )
+
+    target_is_strongest_rival = (
+        effects.target_role == "rival"
+        and (
+            strongest_external_rival is None
+            or target_effect
+            < strongest_external_rival.owen_value - tolerance
+        )
     )
 
     target_is_weakest_supporter = (
-        weakest is not None
-        and weakest.member_set == target_set
+        effects.target_role == "supporter"
+        and (
+            weakest_external_supporter is None
+            or target_effect
+            < weakest_external_supporter.owen_value - tolerance
+        )
     )
 
     if reference_point_status == "too_demanding":
-        return 2 if target_is_worst else 1
+        return 2 if target_is_strongest_rival else 1
 
     if reference_point_status == "pessimistic":
         return 3 if target_is_weakest_supporter else 4
 
-    if best is None:
+    has_supporting_effect = (
+        effects.target_role == "supporter"
+        or bool(effects.external_supporters)
+    )
+
+    has_impairing_effect = (
+        effects.target_role == "rival"
+        or bool(effects.external_rivals)
+    )
+
+    if not has_supporting_effect:
         return 5
 
-    if worst is None:
+    if not has_impairing_effect:
         return 6
 
-    if target_is_worst:
+    if target_is_strongest_rival:
         return 8
 
-    if target_is_best:
+    if target_is_strongest_supporter:
         return 9
 
     return 7
@@ -592,36 +857,25 @@ def classify_rximo_case(
 
 def select_rival_for_case(
     case_number: int,
-    effects: EffectSummary,
-) -> CoalitionCandidate | None:
-    """Select the explanatory external coalition for a classified R-XIMO case.
+    effects: OwenEffectSummary,
+) -> OwenEffect | None:
+    """Select the external Owen effect to relax for an R-XIMO case.
 
-    This selection is based only on the retained coalition effects and the
-    generalized R-XIMO case. Aspiration bounds are intentionally not considered
-    here because this coalition is used to explain the case, not to determine
-    whether a preference adjustment is still actionable.
+    Cases seeking an impairing effect select the strongest external
+    Owen rival. Cases corresponding to an absence of impairing effects
+    select the weakest external supporter, preserving the semantic
+    intent of the original R-XIMO recommendation logic.
 
     Args:
         case_number: generalized R-XIMO case number.
-        effects: retained coalition-effect summary.
+        effects: summarized Owen effects.
 
     Returns:
-        External coalition used in the R-XIMO explanation, or ``None`` when no
-        suitable external alternative exists.
+        Selected external Owen effect, or ``None`` when no suitable
+        external effect exists.
     """
-    if case_number in {1, 5, 7, 9}:
-        rival = effects.strongest_rival
-
-        if (
-            rival is not None
-            and rival.category == "external"
-        ):
-            return rival
-
-        return effects.alternative_rival
-
-    if case_number in {2, 8}:
-        return effects.alternative_rival
+    if case_number in {1, 2, 5, 7, 8, 9}:
+        return effects.strongest_external_rival
 
     if case_number in {3, 4, 6}:
         return effects.weakest_external_supporter
@@ -631,46 +885,28 @@ def select_rival_for_case(
 
 def rank_rivals_for_case(
     case_number: int,
-    effects: EffectSummary,
-) -> list[CoalitionCandidate]:
-    """Rank external preference-change candidates for an R-XIMO case.
+    effects: OwenEffectSummary,
+) -> list[OwenEffect]:
+    """Rank external Owen effects for preference adjustment.
 
-    Cases 1, 2, 5, 7, 8, and 9 seek the strongest external impairing
-    coalition. Cases 3, 4, and 6 seek the weakest external supporting
-    coalition.
+    Cases 1, 2, 5, 7, 8, and 9 rank impairing external effects from
+    strongest to weakest. Cases 3, 4, and 6 rank supporting external
+    effects from weakest to strongest.
 
     Args:
         case_number: generalized R-XIMO case number.
-        effects: retained coalition-effect summary.
+        effects: summarized Owen effects.
 
     Returns:
-        External candidates ordered from most preferred to least preferred
-        for the corresponding case.
+        External Owen effects ordered by preference for adjustment.
     """
-    external = [
-        candidate
-        for candidate in effects.retained_candidates
-        if candidate.category == "external"
-    ]
-
     if case_number in {1, 2, 5, 7, 8, 9}:
-        return sorted(
-            (
-                candidate
-                for candidate in external
-                if candidate.role == "rival"
-            ),
-            key=lambda row: row.contribution,
-        )
+        return list(effects.external_rivals)
 
     if case_number in {3, 4, 6}:
         return sorted(
-            (
-                candidate
-                for candidate in external
-                if candidate.role == "supporter"
-            ),
-            key=lambda row: row.contribution,
+            effects.external_supporters,
+            key=lambda effect: effect.owen_value,
         )
 
     return []
@@ -678,20 +914,31 @@ def rank_rivals_for_case(
 
 def select_actionable_rival_for_case(
     case_number: int,
-    effects: EffectSummary,
+    effects: OwenEffectSummary,
     reference_point_min: np.ndarray,
     nadir_min: np.ndarray,
     objective_symbols: list[str],
 ) -> tuple[
-    CoalitionCandidate | None,
+    OwenEffect | None,
     tuple[str, ...],
     tuple[str, ...],
 ]:
-    """Select the strongest rival candidate with an available adjustment.
+    """Select the strongest eligible Owen-based rival that can be impaired.
+
+    Candidates are considered according to the generalized R-XIMO
+    ranking. Candidates whose aspiration is already at or beyond the
+    nadir are skipped.
+
+    Args:
+        case_number: generalized R-XIMO case number.
+        effects: summarized Owen effects.
+        reference_point_min: reference point in minimization orientation.
+        nadir_min: nadir vector in minimization orientation.
+        objective_symbols: objective symbols in problem order.
 
     Returns:
-        Selected coalition, its actionable members, and members already at or
-        beyond nadir.
+        Selected Owen effect, actionable member tuple, and
+        non-actionable member tuple.
     """
     ranked_candidates = rank_rivals_for_case(
         case_number,
@@ -699,8 +946,10 @@ def select_actionable_rival_for_case(
     )
 
     for candidate in ranked_candidates:
+        members = (candidate.member,)
+
         actionable = actionable_rival_members(
-            candidate.members,
+            members,
             reference_point_min,
             nadir_min,
             objective_symbols,
@@ -711,7 +960,7 @@ def select_actionable_rival_for_case(
 
         non_actionable = tuple(
             member
-            for member in candidate.members
+            for member in members
             if member not in actionable
         )
 
@@ -750,41 +999,40 @@ def case_name(case_number: int) -> str:
 def generate_explanation(
     case_number: int,
     target_members: tuple[str, ...],
-    rival: CoalitionCandidate | None,
-    effects: EffectSummary,
+    rival: OwenEffect | None,
+    effects: OwenEffectSummary,
+    interaction: RivalInteraction | None = None,
 ) -> str:
-    """Generate a verbal explanation for a classified R-XIMO case.
+    """Generate a verbal explanation for a generalized R-XIMO case.
+
+    The explanation is based primarily on Owen attribution effects.
+    When a meaningful interaction is identified between the selected
+    individual rival and another Owen-identified rival, the interaction
+    is reported as an additional joint effect.
 
     Args:
-        case_number (int): generalized R-XIMO case number.
-        target_members (tuple[str, ...]): complete target coalition.
-        rival (dict | None): selected external alternative.
-        effects (EffectSummary): retained effect summary.
+        case_number: generalized R-XIMO case number.
+        target_members: selected target reference point components.
+        rival: individual external Owen effect selected by the case logic.
+        effects: summarized Owen effects.
+        interaction: optional meaningful interaction involving the selected rival.
 
     Returns:
-        str: decision-maker-facing explanation of the selected case.
+        Decision-maker-facing explanation of the selected case.
     """
     target_text = format_members(target_members)
 
     rival_text = (
-        format_members(rival.members)
+        format_members((rival.member,))
         if rival is not None
         else "no external alternative"
     )
 
-    best_text = (
+    strongest_external_rival_text = (
         format_members(
-            effects.strongest_supporter.members
+            (effects.strongest_external_rival.member,)
         )
-        if effects.strongest_supporter is not None
-        else "none"
-    )
-
-    worst_text = (
-        format_members(
-            effects.strongest_rival.members
-        )
-        if effects.strongest_rival is not None
+        if effects.strongest_external_rival is not None
         else "none"
     )
 
@@ -792,49 +1040,73 @@ def generate_explanation(
         1: (
             "The solution is worse than the aspiration level in every "
             "objective, so the reference point appears too demanding. "
-            f"The strongest impairing effect for {target_text} is {worst_text}."
+            f"However, no external aspiration level was identified as "
+            f"having an impairing effect on {target_text}."
+        ) if strongest_external_rival_text == "none" else (
+            "The solution is worse than the aspiration level in every "
+            "objective, so the reference point appears too demanding. "
+            f"The strongest impairing effect for "
+            f"{target_text} is {strongest_external_rival_text}."
         ),
         2: (
             "The solution is worse than the aspiration level in every "
-            f"objective, and {target_text} itself has the strongest impairing "
-            f"effect. The external alternative is {rival_text}."
+            f"objective, and the aspiration levels of {target_text} "
+            "collectively have the strongest impairing effect. "
+            f"The strongest external alternative is {rival_text}."
         ),
         3: (
             "The solution is better than the aspiration level in every "
             "objective, so the reference point appears pessimistic. "
-            f"The complete target coalition {target_text} has the weakest "
-            "supporting coalition-level effect. Among the objectives outside "
-            f"the selected target coalition, {rival_text} has the weakest "
-            "supporting effect."
+            f"The aspiration levels of {target_text} collectively have "
+            "the weakest supporting effect. Among the objectives "
+            f"outside the selected target set, {rival_text} has the "
+            "weakest supporting effect."
         ),
         4: (
             "The solution is better than the aspiration level in every "
             "objective, so the reference point appears pessimistic. "
-            "Among the objectives outside the selected target coalition, "
-            f"{rival_text} has the weakest supporting coalition-level effect."
+            "Among the objectives outside the selected target set, "
+            f"{rival_text} has the weakest supporting effect."
         ),
         5: (
-            f"No retained component supports {target_text}. The strongest "
-            f"impairing effect is {worst_text}."
+            f"No component supports {target_text}. The strongest "
+            f"external impairing effect is {strongest_external_rival_text}."
         ),
         6: (
-            f"No retained component impairs {target_text}. The weakest "
-            f"supporting effect is {rival_text}."
+            f"No component impairs {target_text}. Among the objectives "
+            f"outside the selected target set, {rival_text} has the "
+            "weakest supporting effect."
         ),
         7: (
-            f"The selected target coalition {target_text} is most supported "
-            f"by {best_text} and most impaired by {worst_text}."
+            f"The effects for {target_text} contain both supporting "
+            "and impairing influences. The strongest external impairing "
+            f"effect is {strongest_external_rival_text}."
         ),
         8: (
-            f"The target coalition {target_text} is most impaired by its own "
-            f"aspiration levels. The strongest external rival is {rival_text}."
+            f"The aspiration levels of {target_text} collectively have "
+            "the strongest impairing effect. The strongest external "
+            f"rival is {rival_text}."
         ),
         9: (
-            f"The target coalition {target_text} is most supported by its own "
-            f"aspiration levels and most impaired by {worst_text}."
+            f"The aspiration levels of {target_text} collectively have "
+            "the strongest supporting effect. The strongest external "
+            f"impairing effect is {strongest_external_rival_text}."
         ),
     }
-    return explanations[case_number]
+
+    explanation = explanations[case_number]
+
+    if interaction is not None:
+        interaction_text = format_members(
+            interaction.members
+        )
+        explanation += (
+            f" In addition, {interaction_text} exhibits an additional "
+            "joint impairing effect beyond the corresponding individual "
+            "coalition effects."
+        )
+
+    return explanation
 
 
 def generate_suggestion(
@@ -847,19 +1119,47 @@ def generate_suggestion(
 
         if actionable_rivals:
             rival_text = format_members(actionable_rivals)
-            return (
-                f"Try improving the aspiration levels for {target_text} and "
-                f"impairing the aspiration levels for {rival_text}."
+
+            target_word = (
+                "level"
+                if len(actionable_targets) == 1
+                else "levels"
+            )
+            rival_word = (
+                "level"
+                if len(actionable_rivals) == 1
+                else "levels"
             )
 
+            return (
+                f"Try improving the aspiration {target_word} for "
+                f"{target_text} and relaxing the aspiration "
+                f"{rival_word} for {rival_text}."
+            )
+
+        target_word = (
+            "level"
+            if len(actionable_targets) == 1
+            else "levels"
+        )
+
         return (
-            f"Try improving the aspiration levels for {target_text}."
+            f"Try improving the aspiration {target_word} for "
+            f"{target_text}."
         )
 
     if actionable_rivals:
         rival_text = format_members(actionable_rivals)
+
+        rival_word = (
+            "level"
+            if len(actionable_rivals) == 1
+            else "levels"
+        )
+
         return (
-            f"Try impairing the aspiration levels for {rival_text}."
+            f"Try relaxing the aspiration {rival_word} for "
+            f"{rival_text}."
         )
 
     return "No further aspiration-level adjustment was identified."
@@ -867,40 +1167,46 @@ def generate_suggestion(
 
 def build_rximo_suggestion(
     reference_point_status: ReferencePointStatus,
-    candidates: list[CoalitionCandidate],
+    owen_summary: pl.DataFrame,
+    interaction_summary: pl.DataFrame,
     target_symbols: list[str],
-    coalition_advantage_threshold: float,
     reference_point_min: np.ndarray,
     ideal_min: np.ndarray,
     nadir_min: np.ndarray,
     objective_symbols: list[str],
+    interaction_tolerance: float = 1e-6,
+    interaction_relative_threshold: float = 0.15,
 ) -> RXIMOSuggestion:
-    """Build a complete generalized R-XIMO suggestion.
+    """Build a generalized R-XIMO suggestion from Owen effects.
+
+    Owen values provide the primary attribution effects used for case
+    classification and individual rival selection. Pairwise coalition
+    interactions are used as a secondary refinement when multiple
+    external objectives have impairing Owen effects.
 
     Args:
-        reference_point_status (ReferencePointStatus): classified aspiration
-        pattern.
-        candidates (list[CoalitionCandidate]): categorized coalition candidates.
-        target_symbols (list[str]): selected target output symbols.
-        coalition_advantage_threshold (float): redundancy threshold for larger
-        external coalitions.
-        reference_point_min (np.ndarray): reference point in common minimization
-            orientation.
-        ideal_min (np.ndarray): ideal objective vector in common minimization
-            orientation.
-        nadir_min (np.ndarray): nadir objective vector in common minimization
-            orientation.
-        objective_symbols (list[str]): objective symbols in problem order.
+        reference_point_status: classified aspiration pattern.
+        owen_summary: individual Owen-value summary.
+        interaction_summary: pairwise coalition-interaction diagnostics.
+        target_symbols: selected target objective symbols.
+        reference_point_min: reference point in common minimization orientation.
+        ideal_min: ideal objective vector in common minimization orientation.
+        nadir_min: nadir objective vector in common minimization orientation.
+        objective_symbols: objective symbols in problem order.
+        interaction_tolerance: minimum absolute negative interaction required
+            for promoting an individual rival to an interacting pair.
+        interaction_relative_threshold: minimum relative interaction strength
+            required for promoting an individual rival to an interacting pair.
 
     Returns:
-        RXIMOSuggestion: selected case, relevant coalitions, explanation, and
+        Selected generalized R-XIMO case, explanation, and actionable
         preference-change suggestion.
     """
-    target_set = target_input_members(target_symbols)
     target_members = tuple(
         f"r_{clean_symbol(target)}"
         for target in target_symbols
     )
+
     actionable_targets = actionable_target_members(
         target_members,
         reference_point_min,
@@ -914,15 +1220,14 @@ def build_rximo_suggestion(
         if target not in actionable_targets
     )
 
-    effects = summarize_effects(
-        candidates,
-        target_set,
-        coalition_advantage_threshold,
+    effects = summarize_owen_effects(
+        owen_summary,
+        target_symbols,
     )
+
     number = classify_rximo_case(
         reference_point_status,
         effects,
-        target_set,
     )
 
     explanatory_rival = select_rival_for_case(
@@ -930,13 +1235,141 @@ def build_rximo_suggestion(
         effects,
     )
 
-    action_rival, actionable_rivals, non_actionable_rivals = select_actionable_rival_for_case(
+    (
+        action_rival,
+        actionable_rivals,
+        non_actionable_rivals,
+    ) = select_actionable_rival_for_case(
         number,
         effects,
         reference_point_min,
         nadir_min,
         objective_symbols,
     )
+
+    """print("\nOWEN-BASED R-XIMO DEBUG")
+    print("-" * 50)
+    print(f"Target effect: {effects.target_effect:+.6f}")
+    print(f"Target role: {effects.target_role}")
+
+    print("External supporters:")
+    for effect in effects.external_supporters:
+        print(
+            f"  {effect.member}: "
+            f"{effect.owen_value:+.6f}"
+        )
+
+    print("External rivals:")
+    for effect in effects.external_rivals:
+        print(
+            f"  {effect.member}: "
+            f"{effect.owen_value:+.6f}"
+        )
+
+    print(f"R-XIMO case: {number}")
+
+    print(
+        "Explanatory rival:",
+        explanatory_rival.member
+        if explanatory_rival is not None
+        else "none",
+    )
+
+    print(
+        "Action rival:",
+        action_rival.member
+        if action_rival is not None
+        else "none",
+    )"""
+
+    interaction = None
+    selected_action_rival_members: tuple[str, ...] = ()
+
+    if action_rival is not None:
+        selected_action_rival_members = (
+            action_rival.member,
+        )
+
+        # Interaction refinement applies only when the selected
+        # adjustment is an actual impairing Owen effect. Cases that
+        # deliberately relax a weak supporter are not promoted to
+        # interacting rival coalitions.
+        if action_rival.role == "rival":
+            """print("Eligible rival interactions:")
+
+            external_rival_members = {
+                effect.member
+                for effect in effects.external_rivals
+            }
+
+            for row in interaction_summary.to_dicts():
+                members = tuple(row["members"])
+
+                if (
+                    set(members).issubset(external_rival_members)
+                    and action_rival.member in members
+                ):
+                    print(
+                        f"  {members}: "
+                        f"interaction={float(row['interaction']):+.6f}, "
+                        f"relative={float(row['relative_interaction']):.3f}"
+                    )"""
+
+            interaction = select_rival_interaction(
+                interaction_summary,
+                effects.external_rivals,
+                selected_rival=action_rival.member,
+                interaction_tolerance=interaction_tolerance,
+                relative_threshold=interaction_relative_threshold,
+            )
+
+            if interaction is not None:
+                selected_action_rival_members = (
+                    interaction.members
+                )
+
+                actionable_rivals = actionable_rival_members(
+                    selected_action_rival_members,
+                    reference_point_min,
+                    nadir_min,
+                    objective_symbols,
+                )
+
+                non_actionable_rivals = tuple(
+                    member
+                    for member in selected_action_rival_members
+                    if member not in actionable_rivals
+                )
+
+    """if interaction is not None:
+        print(
+            "Promoted rival interaction:",
+            interaction.members,
+        )
+        print(
+            f"Interaction: "
+            f"{interaction.interaction:+.6f}"
+        )
+        print(
+            f"Relative interaction: "
+            f"{interaction.relative_interaction:.3f}"
+        )
+    else:
+        print("Promoted rival interaction: none")"""
+
+    strongest_supporter_members: tuple[str, ...] = ()
+
+    if effects.strongest_external_supporter is not None:
+        strongest_supporter_members = (
+            effects.strongest_external_supporter.member,
+        )
+
+    strongest_rival_members: tuple[str, ...] = ()
+
+    if effects.strongest_external_rival is not None:
+        strongest_rival_members = (
+            effects.strongest_external_rival.member,
+        )
 
     return RXIMOSuggestion(
         case_number=number,
@@ -946,32 +1379,21 @@ def build_rximo_suggestion(
         actionable_target_members=actionable_targets,
         non_actionable_target_members=non_actionable_targets,
         rival_members=(
-            tuple(explanatory_rival.members)
+            (explanatory_rival.member,)
             if explanatory_rival is not None
             else ()
         ),
-        selected_action_rival_members=(
-            tuple(action_rival.members)
-            if action_rival is not None
-            else ()
-        ),
+        selected_action_rival_members=selected_action_rival_members,
         actionable_rival_members=actionable_rivals,
         non_actionable_rival_members=non_actionable_rivals,
-        strongest_supporter_members=(
-            tuple(effects.strongest_supporter.members)
-            if effects.strongest_supporter is not None
-            else ()
-        ),
-        strongest_rival_members=(
-            tuple(effects.strongest_rival.members)
-            if effects.strongest_rival is not None
-            else ()
-        ),
+        strongest_supporter_members=strongest_supporter_members,
+        strongest_rival_members=strongest_rival_members,
         explanation=generate_explanation(
             number,
             target_members,
             explanatory_rival,
             effects,
+            interaction,
         ),
         suggestion=generate_suggestion(
             actionable_targets,

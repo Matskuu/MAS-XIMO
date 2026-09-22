@@ -571,15 +571,34 @@ class MultiTargetOwenExplainer(OwenExplainer):
 
             pair = contributions[frozenset({first, second})]
 
+            first_contribution = contributions[
+                frozenset({first})
+            ]
+            second_contribution = contributions[
+                frozenset({second})
+            ]
+
             interaction = (
                 pair
-                - contributions[frozenset({first})]
-                - contributions[frozenset({second})]
+                - first_contribution
+                - second_contribution
+            )
+
+            denominator = (
+                abs(first_contribution)
+                + abs(second_contribution)
+            )
+
+            relative_interaction = (
+                abs(interaction) / denominator
+                if denominator > tolerance
+                else 0.0
             )
 
             rows.append(
                 {
                     "coalition": f"{{{first}, {second}}}",
+                    "members": [first, second],
                     "pair_contribution": pair,
                     "interaction": interaction,
                     "absolute_interaction": abs(interaction),
@@ -590,6 +609,7 @@ class MultiTargetOwenExplainer(OwenExplainer):
                         if interaction < -tolerance
                         else "approximately additive"
                     ),
+                    "relative_interaction": relative_interaction,
                 }
             )
 

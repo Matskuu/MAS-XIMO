@@ -165,9 +165,6 @@ class OwenExplanationService:
             background_size=self.background_size,
             seed=self.seed,
             surrogate_model=self.surrogate,
-            coalition_advantage_threshold=(
-                self.coalition_advantage_threshold
-            ),
         )
 
         suggestion = result.suggestion

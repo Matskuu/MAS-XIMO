@@ -14,7 +14,6 @@ from explanations.owen_explainer import (
 from explanations.rximo_cases import (
     RXIMOSuggestion,
     build_rximo_suggestion,
-    coalition_rows_to_candidates,
     classify_reference_point_status,
 )
 from explanations.utils import (
@@ -131,7 +130,6 @@ def generate_explanation_result(
     background_size,
     seed,
     surrogate_model,
-    coalition_advantage_threshold,
 ):
     """Compute one complete multi-target Owen explanation."""
     reference_point_original = np.asarray(
@@ -206,15 +204,13 @@ def generate_explanation_result(
         input_symbols=input_symbols,
     )
 
-    coalition_summary = (
-        explainer.evaluate_all_coalitions(
-            point=reference_point_min,
-        )
+    coalition_summary = explainer.evaluate_all_coalitions(
+        point=reference_point_min,
     )
 
-    candidates = coalition_rows_to_candidates(
-        coalition_summary,
-        target_symbols,
+    interaction_summary = explainer.evaluate_pairwise_interactions(
+        point=reference_point_min,
+        coalition_table=coalition_summary,
     )
 
     reference_point_status = (
@@ -225,14 +221,14 @@ def generate_explanation_result(
     )
 
     suggestion = build_rximo_suggestion(
-        reference_point_status,
-        candidates,
-        target_symbols,
-        coalition_advantage_threshold,
-        reference_point_min,
-        ideal_min,
-        nadir_min,
-        objective_symbols,
+        reference_point_status=reference_point_status,
+        owen_summary=owen_summary,
+        interaction_summary=interaction_summary,
+        target_symbols=target_symbols,
+        reference_point_min=reference_point_min,
+        ideal_min=ideal_min,
+        nadir_min=nadir_min,
+        objective_symbols=objective_symbols,
     )
 
     return ExplanationResult(

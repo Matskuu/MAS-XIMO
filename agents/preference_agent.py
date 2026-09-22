@@ -527,7 +527,7 @@ class PreferenceAgent(Agent):
                 else:
                     print(
                         "The suggested preference change improved "
-                        "all selected target objectives together "
+                        "all selected target objectives simultaneously "
                         "in the RPM check."
                     )
 
@@ -553,7 +553,7 @@ class PreferenceAgent(Agent):
             elif outcome == "target_conflict":
                 print(
                     "The suggested preference change did not "
-                    "improve all selected targets together."
+                    "improve all selected targets simultaneously."
                 )
 
                 if improved:
