@@ -34,25 +34,27 @@ CounterfactualStatus = Literal[
 
 
 @dataclass(frozen=True)
-class TargetChange:
-    """Describe the observed change of one target objective."""
+class ObjectiveChange:
+    """Describe the observed change of one objective."""
 
     symbol: str
     original_value: float
     adjusted_value: float
+    value_change: float
     signed_improvement: float
     status: Literal[
         "improved",
         "worsened",
         "unchanged",
     ]
+    is_target: bool
 
 
 @dataclass(frozen=True)
 class CounterfactualOutcome:
     """Store the result of counterfactual validation."""
 
-    changes: tuple[TargetChange, ...]
+    changes: tuple[ObjectiveChange, ...]
     improved_targets: tuple[str, ...]
     worsened_targets: tuple[str, ...]
     unchanged_targets: tuple[str, ...]
@@ -247,18 +249,23 @@ def evaluate_counterfactual_solution(
         for objective in problem.objectives
     ]
 
-    changes: list[TargetChange] = []
+    changes: list[ObjectiveChange] = []
 
-    for target in target_symbols:
-        symbol = clean_symbol(target)
+    clean_targets = {
+        clean_symbol(target)
+        for target in target_symbols
+    }
 
-        if symbol not in objective_symbols:
+    for target in clean_targets:
+        if target not in objective_symbols:
             raise ValueError(
                 f"Unknown target objective '{target}'."
             )
 
-        index = objective_symbols.index(symbol)
-        objective = problem.objectives[index]
+    changes: list[ObjectiveChange] = []
+
+    for index, objective in enumerate(problem.objectives):
+        symbol = objective_symbols[index]
 
         original_min = original_solution_min[index]
         adjusted_min = adjusted_solution_min[index]
@@ -289,6 +296,12 @@ def evaluate_counterfactual_solution(
                 - adjusted_value
             )
 
+        # Literal numerical change in the original objective orientation.
+        value_change = (
+            adjusted_value
+            - original_value
+        )
+
         scale = max(
             abs(original_value),
             1.0,
@@ -308,7 +321,7 @@ def evaluate_counterfactual_solution(
             status = "unchanged"
 
         changes.append(
-            TargetChange(
+            ObjectiveChange(
                 symbol=symbol,
                 original_value=float(
                     original_value
@@ -316,32 +329,47 @@ def evaluate_counterfactual_solution(
                 adjusted_value=float(
                     adjusted_value
                 ),
+                value_change=float(
+                    value_change
+                ),
                 signed_improvement=float(
                     signed_improvement
                 ),
                 status=status,
+                is_target=(
+                    symbol in clean_targets
+                ),
             )
         )
 
     improved = tuple(
         change.symbol
         for change in changes
-        if change.status == "improved"
+        if (
+            change.is_target
+            and change.status == "improved"
+        )
     )
 
     worsened = tuple(
         change.symbol
         for change in changes
-        if change.status == "worsened"
+        if (
+            change.is_target
+            and change.status == "worsened"
+        )
     )
 
     unchanged = tuple(
         change.symbol
         for change in changes
-        if change.status == "unchanged"
+        if (
+            change.is_target
+            and change.status == "unchanged"
+        )
     )
 
-    if len(improved) == len(changes):
+    if len(improved) == len(clean_targets):
         outcome_type = "joint_improvement"
 
     elif improved and worsened:
@@ -400,10 +428,14 @@ def outcome_to_dict(
                 "adjusted_value": (
                     change.adjusted_value
                 ),
+                "value_change": (
+                    change.value_change
+                ),
                 "signed_improvement": (
                     change.signed_improvement
                 ),
                 "status": change.status,
+                "is_target": change.is_target,
             }
             for change in outcome.changes
         ],

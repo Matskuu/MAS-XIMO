@@ -503,25 +503,10 @@ class PreferenceAgent(Agent):
                 "outcome_type"
             )
 
-            improved = counterfactual.get(
-                "improved_targets",
-                [],
-            )
-
-            worsened = counterfactual.get(
-                "worsened_targets",
-                [],
-            )
-
-            unchanged = counterfactual.get(
-                "unchanged_targets",
-                [],
-            )
-
             if outcome == "joint_improvement":
                 if len(targets) == 1:
                     print(
-                        f"The suggested preference change improved "
+                        "The suggested preference change improved "
                         f"{targets[0]} in the RPM check."
                     )
                 else:
@@ -534,39 +519,16 @@ class PreferenceAgent(Agent):
             elif outcome == "partial_improvement":
                 print(
                     "The suggested preference change improved "
-                    "some selected targets without worsening "
-                    "the others."
+                    "some selected target objectives without "
+                    "worsening the others."
                 )
-
-                if improved:
-                    print(
-                        "Improved: "
-                        + ", ".join(improved)
-                    )
-
-                if unchanged:
-                    print(
-                        "Unchanged: "
-                        + ", ".join(unchanged)
-                    )
 
             elif outcome == "target_conflict":
                 print(
                     "The suggested preference change did not "
-                    "improve all selected targets simultaneously."
+                    "improve all selected target objectives "
+                    "simultaneously."
                 )
-
-                if improved:
-                    print(
-                        "Improved: "
-                        + ", ".join(improved)
-                    )
-
-                if worsened:
-                    print(
-                        "Worsened: "
-                        + ", ".join(worsened)
-                    )
 
             elif outcome == "no_improvement":
                 print(
@@ -574,39 +536,78 @@ class PreferenceAgent(Agent):
                     "improve the selected target objectives."
                 )
 
-                if worsened:
-                    print(
-                        "Worsened: "
-                        + ", ".join(worsened)
-                    )
-
-                if unchanged:
-                    print(
-                        "Unchanged: "
-                        + ", ".join(unchanged)
-                    )
-
             elif outcome == "negligible_change":
-                changes = counterfactual.get(
-                    "changes",
-                    [],
-                )
-
-                if len(changes) == 1:
-                    symbol = changes[0].get(
-                        "symbol",
-                        "the selected target",
-                    )
-
+                if len(targets) == 1:
                     print(
                         "The tested preference change produced "
-                        f"no meaningful change in {symbol}."
+                        f"no meaningful change in {targets[0]}."
                     )
                 else:
                     print(
                         "The tested preference change produced "
-                        "no meaningful change in the selected targets."
+                        "no meaningful change in the selected "
+                        "target objectives."
                     )
+
+            changes = counterfactual.get(
+                "changes",
+                [],
+            )
+
+            if changes:
+                print()
+                print("Objective changes")
+                print("-" * 60)
+
+                for change in changes:
+                    symbol = change.get(
+                        "symbol",
+                        "unknown",
+                    )
+
+                    if change.get(
+                        "is_target",
+                        False,
+                    ):
+                        symbol = (
+                            f"{symbol} (target)"
+                        )
+
+                    original_value = float(
+                        change.get(
+                            "original_value",
+                            0.0,
+                        )
+                    )
+
+                    adjusted_value = float(
+                        change.get(
+                            "adjusted_value",
+                            0.0,
+                        )
+                    )
+
+                    value_change = float(
+                        change.get(
+                            "value_change",
+                            0.0,
+                        )
+                    )
+
+                    status = change.get(
+                        "status",
+                        "unchanged",
+                    )
+
+                    print(
+                        f"{symbol}: "
+                        f"{original_value:.6f} -> "
+                        f"{adjusted_value:.6f} "
+                        f"({value_change:+.6f}) "
+                        f"{status}"
+                    )
+
+                print("-" * 60)
 
         opportunity_result = contents.get(
             "opportunities"
@@ -797,13 +798,13 @@ class PreferenceAgent(Agent):
                     print(
                         f"The relevant external aspiration level for "
                         f"{rival_text} is already at its nadir value, "
-                        "so it cannot be impaired further."
+                        "so it cannot be relaxed further."
                     )
                 else:
                     print(
                         f"The relevant external aspiration levels for "
                         f"{rival_text} are already at their nadir values, "
-                        "so they cannot be impaired further."
+                        "so they cannot be relaxed further."
                     )
 
             elif actionable_rivals:
@@ -814,12 +815,12 @@ class PreferenceAgent(Agent):
                 if len(actionable_rivals) == 1:
                     print(
                         f"The aspiration level for {rival_text} "
-                        "can be impaired."
+                        "can be relaxed."
                     )
                 else:
                     print(
                         f"The aspiration levels for {rival_text} "
-                        "can be impaired."
+                        "can be relaxed."
                     )
 
         
@@ -882,15 +883,34 @@ class PreferenceAgent(Agent):
 
             if changes:
                 print()
-                print("Target comparison:")
+                print("Objective comparison:")
 
                 for change in changes:
+                    symbol = change["symbol"]
+
+                    if change.get(
+                        "is_target",
+                        False,
+                    ):
+                        symbol = f"{symbol} (target)"
+
+                    original_value = float(
+                        change["original_value"]
+                    )
+                    adjusted_value = float(
+                        change["adjusted_value"]
+                    )
+                    value_change = float(
+                        change["value_change"]
+                    )
+                    status = change["status"]
+
                     print(
-                        f"{change['symbol']}: "
-                        f"{float(change['original_value']):.6f} "
-                        "-> "
-                        f"{float(change['adjusted_value']):.6f} "
-                        f"({change['status']})"
+                        f"{symbol}: "
+                        f"{original_value:.6f} -> "
+                        f"{adjusted_value:.6f} "
+                        f"({value_change:+.6f}) "
+                        f"{status}"
                     )
 
             adjusted_reference_point = (
