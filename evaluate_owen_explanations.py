@@ -31,6 +31,7 @@ from explanations.utils import (
     solve_reference_point_with_desdeo_rpm,
 )
 from generate_background_data import generate_background_data
+from objective_hierarchy import build_objective_hierarchy
 from problem_setup import PROBLEM_CHOICES, create_problem, default_background_path
 
 
@@ -278,6 +279,23 @@ def main() -> None:
         default=None,
         help="Optional output CSV path.",
     )
+    parser.add_argument(
+        "--clustering",
+        choices=(
+            "correlation",
+            "moo-pearson-relationship",
+            "moo-pearson-conflict",
+            "moo-spearman-relationship",
+            "moo-spearman-conflict",
+        ),
+        default="correlation",
+        help=(
+            "Hierarchy used by the Partition explainer. "
+            "'correlation' uses the default reference-point correlation "
+            "hierarchy. MOO modes construct the hierarchy from relationships "
+            "among RPM solution objective values."
+        ),
+    )
     args = parser.parse_args()
 
     problem = create_problem(args.problem)
@@ -294,6 +312,47 @@ def main() -> None:
     target_sets = parse_target_sets(args.target_sets, objective_symbols)
     background_path = ensure_background(args.problem, args.samples, args.seed)
 
+    if args.clustering == "correlation":
+        clustering = "correlation"
+
+    else:
+        background_data = pl.read_csv(background_path)
+
+        solution_columns = [
+            f"s_f_{index}"
+            for index in range(1, len(objective_symbols) + 1)
+        ]
+
+        missing_columns = [
+            column
+            for column in solution_columns
+            if column not in background_data.columns
+        ]
+
+        if missing_columns:
+            raise ValueError(
+                "Cannot construct MOO-informed hierarchy. "
+                "Missing solution columns: "
+                + ", ".join(missing_columns)
+            )
+
+        solution_values = (
+            background_data.select(solution_columns)
+            .to_numpy()
+            .astype(float)
+        )
+
+        _, correlation_method, distance_method = (
+            args.clustering.split("-")
+        )
+
+        clustering = build_objective_hierarchy(
+            solution_values,
+            correlation_method=correlation_method,
+            distance_method=distance_method,
+            linkage_method="average",
+        )
+
     service = OwenExplanationService(
         problem=problem,
         background_data_path=background_path,
@@ -301,6 +360,7 @@ def main() -> None:
         seed=args.seed,
         background_size=args.background_size,
         coalition_advantage_threshold=args.coalition_advantage_threshold,
+        clustering=clustering,
     )
 
     print("OWEN EXPLANATION BEHAVIOR EVALUATION")
@@ -308,9 +368,14 @@ def main() -> None:
     print(f"Problem:             {args.problem}")
     print(f"Background samples:  {args.samples}")
     print(f"Surrogate:           {args.surrogate_type}")
+    print(f"Clustering:          {args.clustering}")
     print(f"Target sets:         {len(target_sets)}")
     print(f"Profiles:            {', '.join(args.profiles)}")
     print(f"Counterfactual step: {args.counterfactual_step:.3f}")
+
+    if isinstance(clustering, np.ndarray):
+        print("MOO hierarchy:")
+        print(clustering)
 
     rows: list[dict] = []
 
@@ -409,6 +474,7 @@ def main() -> None:
 
                 row = {
                     "problem": args.problem,
+                    "clustering": args.clustering,
                     "target_set": target_label,
                     "profile": profile_name,
                     "case_number": explanation["case_number"],
@@ -457,6 +523,7 @@ def main() -> None:
                 rows.append(
                     {
                         "problem": args.problem,
+                        "clustering": args.clustering,
                         "target_set": target_label,
                         "profile": profile_name,
                         "case_number": None,
@@ -488,7 +555,11 @@ def main() -> None:
 
     results = pl.DataFrame(rows)
     output = args.output or Path("results") / (
-        f"owen_explanation_evaluation_{args.problem}_{args.samples}samples_seed{args.seed}.csv"
+        f"owen_explanation_evaluation_"
+        f"{args.problem}_"
+        f"{args.clustering}_"
+        f"{args.samples}samples_"
+        f"seed{args.seed}.csv"
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     results.write_csv(output)

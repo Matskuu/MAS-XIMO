@@ -90,6 +90,7 @@ def build_explainer(
     background_size,
     seed,
     surrogate_model,
+    clustering: str | np.ndarray = "correlation",
 ):
     """Construct a target-specific Owen explainer."""
     background = data.sample(
@@ -113,6 +114,7 @@ def build_explainer(
 
     explainer.setup(
         background_data=background,
+        clustering=clustering,
     )
 
     return explainer
@@ -130,6 +132,7 @@ def generate_explanation_result(
     background_size,
     seed,
     surrogate_model,
+    clustering: str | np.ndarray = "correlation",
 ):
     """Compute one complete multi-target Owen explanation."""
     reference_point_original = np.asarray(
@@ -182,6 +185,7 @@ def generate_explanation_result(
         background_size=background_size,
         seed=seed,
         surrogate_model=surrogate_model,
+        clustering=clustering,
     )
 
     explained_point = pl.DataFrame(

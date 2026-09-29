@@ -37,6 +37,7 @@ class OwenExplanationService:
         seed: int = 1,
         background_size: int = 100,
         coalition_advantage_threshold: float = 0.05,
+        clustering: str | np.ndarray = "correlation",
     ):
         self.problem = problem
 
@@ -44,6 +45,7 @@ class OwenExplanationService:
         self.surrogate_type = surrogate_type
         self.seed = seed
         self.background_size = background_size
+        self.clustering = clustering
 
         self.coalition_advantage_threshold = (
             coalition_advantage_threshold
@@ -165,6 +167,7 @@ class OwenExplanationService:
             background_size=self.background_size,
             seed=self.seed,
             surrogate_model=self.surrogate,
+            clustering=self.clustering,
         )
 
         suggestion = result.suggestion
