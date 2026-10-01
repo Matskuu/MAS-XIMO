@@ -19,26 +19,12 @@ import polars as pl
 from scipy.cluster.hierarchy import linkage
 from scipy.spatial.distance import squareform
 
+from explanations.utils import get_objective_symbols, get_rximo_symbols
 from problem_setup import (
     PROBLEM_CHOICES,
+    create_problem,
     default_background_path,
 )
-
-
-def get_solution_columns(data: pl.DataFrame) -> list[str]:
-    """Return solution-objective columns in dataset order."""
-    columns = [
-        column
-        for column in data.columns
-        if column.startswith("s_f_")
-    ]
-
-    if not columns:
-        raise ValueError(
-            "Dataset does not contain solution columns with prefix 's_f_'."
-        )
-
-    return columns
 
 
 def compute_pearson_correlation(
@@ -272,19 +258,25 @@ def main() -> None:
             f"Background dataset not found: {input_path}"
         )
 
+    problem = create_problem(args.problem)
     data = pl.read_csv(input_path)
 
-    solution_columns = get_solution_columns(data)
+    _, solution_columns = get_rximo_symbols(problem)
+    missing_columns = [
+        column for column in solution_columns if column not in data.columns
+    ]
+    if missing_columns:
+        raise ValueError(
+            "Dataset does not contain the expected solution columns: "
+            + ", ".join(missing_columns)
+        )
     solution_values = (
         data.select(solution_columns)
         .to_numpy()
         .astype(float)
     )
 
-    objective_labels = [
-        column.removeprefix("s_")
-        for column in solution_columns
-    ]
+    objective_labels = get_objective_symbols(problem)
 
     print("MOO objective relationship analysis")
     print("=" * 60)

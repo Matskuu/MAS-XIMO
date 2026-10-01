@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import json
-from itertools import combinations
 from pathlib import Path
 
 import numpy as np
@@ -27,50 +26,18 @@ from explanations.owen_explainer import MultiTargetOwenExplainer
 from explanations.owen_service import OwenExplanationService
 from explanations.utils import (
     get_objective_symbols,
+    get_rximo_symbols,
     orient_objectives_from_minimize,
     solve_reference_point_with_desdeo_rpm,
+)
+from experiment_scenarios import (
+    PROFILE_NAMES,
+    default_target_sets,
+    reference_profiles,
 )
 from generate_background_data import generate_background_data
 from objective_hierarchy import build_objective_hierarchy
 from problem_setup import PROBLEM_CHOICES, create_problem, default_background_path
-
-
-PROFILE_FRACTIONS = {
-    "near_ideal": None,
-    "balanced": None,
-    "near_nadir": None,
-    "mixed_a": None,
-    "mixed_b": None,
-}
-
-
-def reference_profiles(problem) -> dict[str, np.ndarray]:
-    """Return deterministic reference points spanning symmetric and mixed regions."""
-    ideal = np.asarray([float(obj.ideal) for obj in problem.objectives], dtype=float)
-    nadir = np.asarray([float(obj.nadir) for obj in problem.objectives], dtype=float)
-
-    def interpolate(fraction):
-        fraction = np.asarray(fraction, dtype=float)
-        return ideal + fraction * (nadir - ideal)
-
-    n_obj = len(problem.objectives)
-    mixed_a = np.asarray([0.15 if i % 2 == 0 else 0.85 for i in range(n_obj)])
-    mixed_b = 1.0 - mixed_a
-
-    return {
-        "near_ideal": interpolate(np.full(n_obj, 0.10)),
-        "balanced": interpolate(np.full(n_obj, 0.50)),
-        "near_nadir": interpolate(np.full(n_obj, 0.90)),
-        "mixed_a": interpolate(mixed_a),
-        "mixed_b": interpolate(mixed_b),
-    }
-
-
-def default_target_sets(objective_symbols: list[str]) -> list[list[str]]:
-    """Use all singleton and pair target sets as the compact default sweep."""
-    sets = [[symbol] for symbol in objective_symbols]
-    sets.extend([list(pair) for pair in combinations(objective_symbols, 2)])
-    return sets
 
 
 def parse_target_sets(raw_sets: list[str] | None, objective_symbols: list[str]) -> list[list[str]]:
@@ -262,8 +229,8 @@ def main() -> None:
     parser.add_argument(
         "--profiles",
         nargs="+",
-        choices=tuple(PROFILE_FRACTIONS),
-        default=list(PROFILE_FRACTIONS),
+        choices=PROFILE_NAMES,
+        default=list(PROFILE_NAMES),
     )
     parser.add_argument("--counterfactual-step", type=float, default=0.10)
     parser.add_argument(
@@ -318,10 +285,7 @@ def main() -> None:
     else:
         background_data = pl.read_csv(background_path)
 
-        solution_columns = [
-            f"s_f_{index}"
-            for index in range(1, len(objective_symbols) + 1)
-        ]
+        _, solution_columns = get_rximo_symbols(problem)
 
         missing_columns = [
             column

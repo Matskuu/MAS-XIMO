@@ -8,11 +8,12 @@ import numpy as np
 
 from desdeo.problem.schema import TensorVariable
 from desdeo.problem.testproblems import (
+    dtlz2,
     river_pollution_problem,
     spanish_sustainability_problem,
 )
 
-PROBLEM_CHOICES = ("river", "spanish")
+PROBLEM_CHOICES = ("dtlz2", "dtlz2_4obj", "river", "spanish")
 
 
 def create_problem(problem_name: str = "river"):
@@ -20,7 +21,7 @@ def create_problem(problem_name: str = "river"):
 
     Args:
         problem_name: Short problem identifier. Supported values are
-            ``"river"`` and ``"spanish"``.
+            ``"dtlz2"``, ``"dtlz2_4obj"``, ``"river"``, and ``"spanish"``.
 
     Returns:
         A DESDEO problem instance.
@@ -38,6 +39,18 @@ def create_problem(problem_name: str = "river"):
     if normalized == "spanish":
         problem = spanish_sustainability_problem()
         return _replace_invalid_initial_values(problem)
+
+    if normalized == "dtlz2":
+        return dtlz2(
+            n_objectives=3,
+            n_variables=7,
+        )
+
+    if normalized == "dtlz2_4obj":
+        return dtlz2(
+            n_objectives=4,
+            n_variables=8,
+        )
 
     raise ValueError(
         f"Unknown problem '{problem_name}'. "
@@ -94,27 +107,22 @@ def _replace_invalid_initial_values(problem):
 def default_background_path(
     problem_name: str,
     *,
-    seed: int = 1,
     samples: int = 300,
+    seed: int = 1,
 ) -> Path:
-    """Return the conventional background-data path for a problem."""
-    base = Path(__file__).resolve().parent / "data"
-    normalized = problem_name.strip().lower()
-
-    if normalized == "river":
-        filename = (
-            f"river_rximo_rpm_background_4obj_"
-            f"{samples}samples_seed{seed}.csv"
-        )
-    elif normalized == "spanish":
-        filename = (
-            f"spanish_rximo_rpm_background_3obj_"
-            f"{samples}samples_seed{seed}.csv"
-        )
-    else:
+    """Return the default RPM background-data path for a problem."""
+    if problem_name not in PROBLEM_CHOICES:
         raise ValueError(
             f"Unknown problem '{problem_name}'. "
-            f"Choose one of: {', '.join(PROBLEM_CHOICES)}."
+            f"Choose one of: {', '.join(sorted(PROBLEM_CHOICES))}."
         )
 
-    return base / filename
+    problem = create_problem(problem_name)
+    n_objectives = len(problem.objectives)
+
+    return Path(
+        "data"
+    ) / (
+        f"{problem_name}_rximo_rpm_background_"
+        f"{n_objectives}obj_{samples}samples_seed{seed}.csv"
+    )

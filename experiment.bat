@@ -1,3 +1,5 @@
-python .\evaluate_owen_explanations.py --problem river --samples 300 --target-sets f_1,f_3
+python .\generate_background_data.py --problem dtlz2_4obj --samples 300 --seed 1
 
-python .\evaluate_owen_explanations.py --problem spanish --samples 500 --target-sets f1,f2
+python .\generate_background_data.py --problem dtlz2_4obj --samples 300 --seed 2
+
+python .\generate_background_data.py --problem dtlz2_4obj --samples 300 --seed 3

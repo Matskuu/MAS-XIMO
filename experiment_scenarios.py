@@ -11,17 +11,51 @@ from explanations.utils import get_objective_symbols
 from problem_setup import PROBLEM_CHOICES, create_problem
 
 
-PROFILES = {
-    "near_ideal": 0.10,
-    "balanced": 0.50,
-    "near_nadir": 0.90,
-}
+PROFILE_NAMES = (
+    "near_ideal",
+    "balanced",
+    "near_nadir",
+    "mixed_a",
+    "mixed_b",
+)
 
 
-def interpolate(ideal: np.ndarray, nadir: np.ndarray, fraction: float) -> np.ndarray:
-    """Interpolate from ideal (0) to nadir (1) in original orientation."""
-    return ideal + fraction * (nadir - ideal)
+def reference_profiles(problem) -> dict[str, np.ndarray]:
+    """Construct normalized reference-point profiles for a DESDEO problem."""
+    ideal = np.asarray(
+        [float(objective.ideal) for objective in problem.objectives],
+        dtype=float,
+    )
+    nadir = np.asarray(
+        [float(objective.nadir) for objective in problem.objectives],
+        dtype=float,
+    )
+    n_objectives = len(problem.objectives)
 
+    fractions = {
+        "near_ideal": np.full(n_objectives, 0.10),
+        "balanced": np.full(n_objectives, 0.50),
+        "near_nadir": np.full(n_objectives, 0.90),
+        "mixed_a": np.asarray(
+            [0.15 if index % 2 == 0 else 0.85 for index in range(n_objectives)],
+            dtype=float,
+        ),
+    }
+    fractions["mixed_b"] = 1.0 - fractions["mixed_a"]
+
+    return {
+        name: ideal + fraction * (nadir - ideal)
+        for name, fraction in fractions.items()
+    }
+
+
+def default_target_sets(objective_symbols: list[str]) -> list[list[str]]:
+    """Return all singleton and pair target sets for an objective set."""
+    target_sets = [[symbol] for symbol in objective_symbols]
+    target_sets.extend(
+        [list(pair) for pair in combinations(objective_symbols, 2)]
+    )
+    return target_sets
 
 def print_scenarios(problem_name: str) -> None:
     problem = create_problem(problem_name)
@@ -37,29 +71,18 @@ def print_scenarios(problem_name: str) -> None:
 
     print("Reference-point profiles")
     print("-" * 72)
-    for name, fraction in PROFILES.items():
-        rp = interpolate(ideal, nadir, fraction)
-        print(f"{name:12s}: " + " ".join(f"{x:.8g}" for x in rp))
-
-    # Mixed profiles use alternating aspiration strength to create clearly
-    # asymmetric situations that are useful for R-XIMO case exploration.
-    if len(symbols) >= 3:
-        fractions_a = np.asarray(
-            [0.15 if i % 2 == 0 else 0.85 for i in range(len(symbols))]
+    for name, reference_point in reference_profiles(problem).items():
+        print(
+            f"{name:12s}: "
+            + " ".join(f"{value:.8g}" for value in reference_point)
         )
-        fractions_b = 1.0 - fractions_a
-        mixed_a = ideal + fractions_a * (nadir - ideal)
-        mixed_b = ideal + fractions_b * (nadir - ideal)
-        print("mixed_A     : " + " ".join(f"{x:.8g}" for x in mixed_a))
-        print("mixed_B     : " + " ".join(f"{x:.8g}" for x in mixed_b))
 
     print()
     print("Recommended target sets")
     print("-" * 72)
-    for symbol in symbols:
-        print(f"single: {symbol}")
-    for pair in combinations(symbols, 2):
-        print("pair  : " + " ".join(pair))
+    for targets in default_target_sets(symbols):
+        label = "single" if len(targets) == 1 else "pair"
+        print(f"{label:6s}: " + " ".join(targets))
 
     if len(symbols) > 3:
         # Include representative 3-target coalitions without exhaustively
