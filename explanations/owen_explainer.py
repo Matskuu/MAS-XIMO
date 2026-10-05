@@ -187,6 +187,7 @@ class OwenExplainer:
         )
         masker = shap.maskers.Partition(
             self.background_array,
+            max_samples=len(self.background_array),
             clustering=clustering,
         )
         self.explainer = shap.PartitionExplainer(
@@ -401,6 +402,7 @@ class MultiTargetOwenExplainer(OwenExplainer):
         )
         masker = shap.maskers.Partition(
             self.background_array,
+            max_samples=len(self.background_array),
             clustering=clustering,
         )
         self.explainer = shap.PartitionExplainer(
