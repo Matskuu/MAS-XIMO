@@ -34,6 +34,7 @@ class OwenExplanationService:
         problem,
         background_data_path: str | Path,
         surrogate_type: str = "gaussian_process",
+        gp_config: str = "current",
         seed: int = 1,
         background_size: int = 100,
         coalition_advantage_threshold: float = 0.05,
@@ -43,6 +44,7 @@ class OwenExplanationService:
 
         self.background_data_path = Path(background_data_path)
         self.surrogate_type = surrogate_type
+        self.gp_config = gp_config
         self.seed = seed
         self.background_size = background_size
         self.clustering = clustering
@@ -81,13 +83,14 @@ class OwenExplanationService:
     def _train_surrogate(self):
         """Train the shared reference-point-to-solution surrogate."""
         print(
-            f"Training Owen surrogate ({self.surrogate_type}) "
+            f"Training Owen surrogate ({self.surrogate_type}, GP config: {self.gp_config}) "
             f"using {self.data.height} RPM samples..."
         )
 
         surrogate = make_default_surrogate(
             random_state=self.seed,
             surrogate_type=self.surrogate_type,
+            gp_config=self.gp_config,
         )
 
         surrogate.fit(

@@ -55,6 +55,12 @@ def parse_args() -> argparse.Namespace:
         default="gaussian_process",
     )
     parser.add_argument(
+        "--gp-config",
+        choices=("current", "bounded", "bounded_restarts"),
+        default="current",
+        help="Gaussian process kernel configuration (default: current).",
+    )
+    parser.add_argument(
         "--coalition-advantage-threshold",
         type=float,
         default=0.05,
@@ -121,6 +127,7 @@ async def main(args: argparse.Namespace):
         problem=problem,
         background_data_path=data_path,
         surrogate_type=args.surrogate_type,
+        gp_config=args.gp_config,
         seed=args.seed,
         background_size=args.background_size,
         coalition_advantage_threshold=(

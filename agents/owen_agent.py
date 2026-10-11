@@ -25,6 +25,7 @@ class OwenAgent(Agent):
         background_data_path: str | Path,
         *,
         surrogate_type: str = "gaussian_process",
+        gp_config: str = "current",
         seed: int = 1,
         background_size: int = 100,
         coalition_advantage_threshold: float = 0.05,
@@ -36,6 +37,7 @@ class OwenAgent(Agent):
         self.background_data_path = Path(background_data_path)
 
         self.surrogate_type = surrogate_type
+        self.gp_config = gp_config
         self.seed = seed
         self.background_size = background_size
         self.coalition_advantage_threshold = (
@@ -108,6 +110,7 @@ class OwenAgent(Agent):
             problem=self.problem,
             background_data_path=self.background_data_path,
             surrogate_type=self.surrogate_type,
+            gp_config=self.gp_config,
             seed=self.seed,
             background_size=self.background_size,
             coalition_advantage_threshold=(
