@@ -61,6 +61,18 @@ def parse_args() -> argparse.Namespace:
         help="Gaussian process kernel configuration (default: current).",
     )
     parser.add_argument(
+        "--hierarchy",
+        choices=(
+            "correlation",
+            "moo-pearson-relationship",
+            "moo-pearson-conflict",
+            "moo-spearman-relationship",
+            "moo-spearman-conflict",
+        ),
+        default="correlation",
+        help="Owen coalition hierarchy (default: correlation).",
+    )
+    parser.add_argument(
         "--coalition-advantage-threshold",
         type=float,
         default=0.05,
@@ -128,6 +140,7 @@ async def main(args: argparse.Namespace):
         background_data_path=data_path,
         surrogate_type=args.surrogate_type,
         gp_config=args.gp_config,
+        hierarchy=args.hierarchy,
         seed=args.seed,
         background_size=args.background_size,
         coalition_advantage_threshold=(

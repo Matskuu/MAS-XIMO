@@ -16,6 +16,8 @@ from explanations.utils import (
     validate_background_data,
 )
 
+from objective_hierarchy import build_objective_hierarchy
+
 from explanations.owen_runtime import (
     generate_explanation_result,
 )
@@ -39,6 +41,7 @@ class OwenExplanationService:
         background_size: int = 100,
         coalition_advantage_threshold: float = 0.05,
         clustering: str | np.ndarray = "correlation",
+        hierarchy: str | None = None,
     ):
         self.problem = problem
 
@@ -47,6 +50,7 @@ class OwenExplanationService:
         self.gp_config = gp_config
         self.seed = seed
         self.background_size = background_size
+        self.hierarchy = hierarchy or (clustering if isinstance(clustering, str) else "custom")
         self.clustering = clustering
 
         self.coalition_advantage_threshold = (
@@ -58,6 +62,10 @@ class OwenExplanationService:
         )
 
         self.data = self._load_background_data()
+
+        if hierarchy is not None:
+            self.clustering = self._resolve_hierarchy(hierarchy)
+
 
         self.surrogate = self._train_surrogate()
 
@@ -79,6 +87,27 @@ class OwenExplanationService:
         )
 
         return data
+
+    def _resolve_hierarchy(self, hierarchy: str) -> str | np.ndarray:
+        """Resolve a fixed objective-informed hierarchy before DM interaction."""
+        if hierarchy == "correlation":
+            return "correlation"
+
+        parts = hierarchy.split("-")
+        if len(parts) != 3 or parts[0] != "moo" or parts[1] not in (
+            "pearson", "spearman"
+        ) or parts[2] not in ("relationship", "conflict"):
+            raise ValueError(f"Unsupported Owen hierarchy: {hierarchy}")
+
+        solution_values = self.data.select(self.output_symbols).to_numpy().astype(float)
+        linkage_matrix = build_objective_hierarchy(
+            solution_values,
+            correlation_method=parts[1],
+            distance_method=parts[2],
+            linkage_method="average",
+        )
+        print(f"Owen hierarchy: {hierarchy} (built from RPM solution objectives)")
+        return linkage_matrix
 
     def _train_surrogate(self):
         """Train the shared reference-point-to-solution surrogate."""
