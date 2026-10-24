@@ -7,13 +7,16 @@ from pathlib import Path
 import numpy as np
 
 from desdeo.problem.schema import TensorVariable
+from desdeo.problem.testproblems.dmitry_forest_problem_discrete import (
+    dmitry_forest_problem_disc,
+)
 from desdeo.problem.testproblems import (
     dtlz2,
     river_pollution_problem,
     spanish_sustainability_problem,
 )
 
-PROBLEM_CHOICES = ("dtlz2", "dtlz2_4obj", "river", "spanish")
+PROBLEM_CHOICES = ("dtlz2", "dtlz2_4obj", "river", "spanish", "forest")
 
 
 def create_problem(problem_name: str = "river"):
@@ -21,7 +24,7 @@ def create_problem(problem_name: str = "river"):
 
     Args:
         problem_name: Short problem identifier. Supported values are
-            ``"dtlz2"``, ``"dtlz2_4obj"``, ``"river"``, and ``"spanish"``.
+            ``"dtlz2"``, ``"dtlz2_4obj"``, ``"river"``, ``"spanish"``, and ``"forest"``.
 
     Returns:
         A DESDEO problem instance.
@@ -30,6 +33,9 @@ def create_problem(problem_name: str = "river"):
         ValueError: if ``problem_name`` is unknown.
     """
     normalized = problem_name.strip().lower()
+
+    if normalized == "forest":
+        return dmitry_forest_problem_disc()
 
     if normalized == "river":
         return river_pollution_problem(

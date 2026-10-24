@@ -57,8 +57,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--gp-config",
         choices=("current", "bounded", "bounded_restarts"),
-        default="current",
-        help="Gaussian process kernel configuration (default: current).",
+        default="bounded_restarts",
+        help="Gaussian process kernel configuration (default: bounded_restarts).",
     )
     parser.add_argument(
         "--hierarchy",
@@ -69,8 +69,8 @@ def parse_args() -> argparse.Namespace:
             "moo-spearman-relationship",
             "moo-spearman-conflict",
         ),
-        default="correlation",
-        help="Owen coalition hierarchy (default: correlation).",
+        default="moo-spearman-conflict",
+        help="Owen coalition hierarchy (default: moo-spearman-conflict).",
     )
     parser.add_argument(
         "--coalition-advantage-threshold",
