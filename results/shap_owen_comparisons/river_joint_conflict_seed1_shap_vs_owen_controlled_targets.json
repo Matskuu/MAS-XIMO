@@ -1,0 +1,1027 @@
+{
+  "configuration": {
+    "scenario": "river_joint_conflict",
+    "description": "Same initial solution: separate city oxygen and fishery ROI explanations versus a joint explanation.",
+    "problem": "river",
+    "target_sets": [
+      [
+        "f_1",
+        "f_3"
+      ],
+      [
+        "f_1",
+        "f_2",
+        "f_3"
+      ]
+    ],
+    "seed": 1,
+    "samples": 300,
+    "background_size": 100,
+    "gp_config": "bounded_restarts",
+    "hierarchy": "moo-spearman-conflict",
+    "shap_nsamples": 256,
+    "counterfactual_step": 0.1,
+    "dataset": "data\\river_rximo_rpm_background_4obj_300samples_seed1.csv",
+    "reference_point_original": [
+      5.5,
+      3.0,
+      5.0,
+      -4.0
+    ],
+    "initial_solution_original": [
+      5.91626879281445,
+      3.1276150778185388,
+      6.553008318355363,
+      -1.9019249488072898
+    ],
+    "comparison_note": "Kernel SHAP values explain individual minimized surrogate outputs; Owen values explain the normalized joint target utility. Do not compare their magnitudes as though they share a scale. Both methods have RPM-validated recommendations. Single-target SHAP uses a separate original-paper-style nine-case classifier on minimized-objective SHAP attributions; the single-target SHAP and Owen explained functions differ."
+  },
+  "single_target_shap": {
+    "f_1": {
+      "target": "f_1",
+      "explained_quantity": "predicted minimized s_f_1",
+      "predicted_target_minimized": -5.991982819456032,
+      "expected_value": -6.1118354453146,
+      "reconstruction_error": 0.0,
+      "shap_values": [
+        {
+          "input": "r_f_1",
+          "shap_value": 0.009254361634565722
+        },
+        {
+          "input": "r_f_2",
+          "shap_value": 0.08347193487418
+        },
+        {
+          "input": "r_f_3",
+          "shap_value": 0.049006441206883494
+        },
+        {
+          "input": "r_f_4",
+          "shap_value": -0.02188011185706085
+        }
+      ]
+    },
+    "f_3": {
+      "target": "f_3",
+      "explained_quantity": "predicted minimized s_f_3",
+      "predicted_target_minimized": -6.3501180409464935,
+      "expected_value": -4.465004878450595,
+      "reconstruction_error": 0.0,
+      "shap_values": [
+        {
+          "input": "r_f_1",
+          "shap_value": -0.23692049100985013
+        },
+        {
+          "input": "r_f_2",
+          "shap_value": -0.5937433474324021
+        },
+        {
+          "input": "r_f_3",
+          "shap_value": -1.1339880324575662
+        },
+        {
+          "input": "r_f_4",
+          "shap_value": 0.0795387084039203
+        }
+      ]
+    },
+    "f_2": {
+      "target": "f_2",
+      "explained_quantity": "predicted minimized s_f_2",
+      "predicted_target_minimized": -3.154901077092956,
+      "expected_value": -3.224177737979556,
+      "reconstruction_error": 0.0,
+      "shap_values": [
+        {
+          "input": "r_f_1",
+          "shap_value": 0.003980562996412691
+        },
+        {
+          "input": "r_f_2",
+          "shap_value": 0.06090146353241404
+        },
+        {
+          "input": "r_f_3",
+          "shap_value": 0.0012281643829870764
+        },
+        {
+          "input": "r_f_4",
+          "shap_value": 0.0031664699747862004
+        }
+      ]
+    }
+  },
+  "single_target_shap_rximo_recommendations": {
+    "f_1": {
+      "target": "f_1",
+      "case_number": 1,
+      "case_name": "all aspirations worse than solution",
+      "reference_point_status": "original_rximo",
+      "explanation": "Original R-XIMO case 1: all aspirations worse than solution. The rival for f_1 is f_2, selected from the minimized-target SHAP row.",
+      "suggestion": "Try improving the aspiration level for f_1 and relaxing the aspiration level for f_2.",
+      "actionable_target_members": [
+        "r_f_1"
+      ],
+      "selected_action_rival_members": [
+        "r_f_2"
+      ],
+      "attributions_minimized_target": [
+        {
+          "input": "r_f_1",
+          "shap_value": 0.009254361634565722
+        },
+        {
+          "input": "r_f_2",
+          "shap_value": 0.08347193487418
+        },
+        {
+          "input": "r_f_3",
+          "shap_value": 0.049006441206883494
+        },
+        {
+          "input": "r_f_4",
+          "shap_value": -0.02188011185706085
+        }
+      ],
+      "rival_index": 1,
+      "best_effect_index": 3,
+      "worst_effect_index": 1,
+      "counterfactual_reference_point": [
+        5.659,
+        2.941,
+        5.0,
+        -4.0
+      ],
+      "counterfactual_solution": [
+        5.9677871307259585,
+        3.1422016991425106,
+        6.394396538926706,
+        -2.0545890544204477
+      ],
+      "outcome": {
+        "outcome_type": "joint_improvement",
+        "joint_target_improvement": true,
+        "improved_targets": [
+          "f_1"
+        ],
+        "worsened_targets": [],
+        "unchanged_targets": [],
+        "changes": [
+          {
+            "symbol": "f_1",
+            "original_value": 5.91626879281445,
+            "adjusted_value": 5.9677871307259585,
+            "value_change": 0.05151833791150828,
+            "signed_improvement": 0.05151833791150828,
+            "status": "improved",
+            "is_target": true
+          },
+          {
+            "symbol": "f_2",
+            "original_value": 3.1276150778185388,
+            "adjusted_value": 3.1422016991425106,
+            "value_change": 0.014586621323971816,
+            "signed_improvement": 0.014586621323971816,
+            "status": "improved",
+            "is_target": false
+          },
+          {
+            "symbol": "f_3",
+            "original_value": 6.553008318355363,
+            "adjusted_value": 6.394396538926706,
+            "value_change": -0.15861177942865634,
+            "signed_improvement": -0.15861177942865634,
+            "status": "worsened",
+            "is_target": false
+          },
+          {
+            "symbol": "f_4",
+            "original_value": -1.9019249488072898,
+            "adjusted_value": -2.0545890544204477,
+            "value_change": -0.1526641056131579,
+            "signed_improvement": -0.1526641056131579,
+            "status": "worsened",
+            "is_target": false
+          }
+        ],
+        "adjusted_reference_point": [
+          5.659,
+          2.941,
+          5.0,
+          -4.0
+        ],
+        "adjusted_solution_min": [
+          -5.9677871307259585,
+          -3.1422016991425106,
+          -6.394396538926706,
+          2.0545890544204477
+        ]
+      },
+      "note": "Independent original-paper-style R-XIMO nine-case baseline. Minimized-objective SHAP signs retained; ties/zero conventions require author-code verification."
+    },
+    "f_3": {
+      "target": "f_3",
+      "case_number": 1,
+      "case_name": "all aspirations worse than solution",
+      "reference_point_status": "original_rximo",
+      "explanation": "Original R-XIMO case 1: all aspirations worse than solution. The rival for f_3 is f_4, selected from the minimized-target SHAP row.",
+      "suggestion": "Try improving the aspiration level for f_3 and relaxing the aspiration level for f_4.",
+      "actionable_target_members": [
+        "r_f_3"
+      ],
+      "selected_action_rival_members": [
+        "r_f_4"
+      ],
+      "attributions_minimized_target": [
+        {
+          "input": "r_f_1",
+          "shap_value": -0.23692049100985013
+        },
+        {
+          "input": "r_f_2",
+          "shap_value": -0.5937433474324021
+        },
+        {
+          "input": "r_f_3",
+          "shap_value": -1.1339880324575662
+        },
+        {
+          "input": "r_f_4",
+          "shap_value": 0.0795387084039203
+        }
+      ],
+      "rival_index": 3,
+      "best_effect_index": 2,
+      "worst_effect_index": 3,
+      "counterfactual_reference_point": [
+        5.5,
+        3.0,
+        5.718,
+        -4.97
+      ],
+      "counterfactual_solution": [
+        5.7587966776236055,
+        3.2006949229410986,
+        6.886653563407998,
+        -2.920630995516759
+      ],
+      "outcome": {
+        "outcome_type": "joint_improvement",
+        "joint_target_improvement": true,
+        "improved_targets": [
+          "f_3"
+        ],
+        "worsened_targets": [],
+        "unchanged_targets": [],
+        "changes": [
+          {
+            "symbol": "f_1",
+            "original_value": 5.91626879281445,
+            "adjusted_value": 5.7587966776236055,
+            "value_change": -0.1574721151908447,
+            "signed_improvement": -0.1574721151908447,
+            "status": "worsened",
+            "is_target": false
+          },
+          {
+            "symbol": "f_2",
+            "original_value": 3.1276150778185388,
+            "adjusted_value": 3.2006949229410986,
+            "value_change": 0.07307984512255983,
+            "signed_improvement": 0.07307984512255983,
+            "status": "improved",
+            "is_target": false
+          },
+          {
+            "symbol": "f_3",
+            "original_value": 6.553008318355363,
+            "adjusted_value": 6.886653563407998,
+            "value_change": 0.3336452450526357,
+            "signed_improvement": 0.3336452450526357,
+            "status": "improved",
+            "is_target": true
+          },
+          {
+            "symbol": "f_4",
+            "original_value": -1.9019249488072898,
+            "adjusted_value": -2.920630995516759,
+            "value_change": -1.018706046709469,
+            "signed_improvement": -1.018706046709469,
+            "status": "worsened",
+            "is_target": false
+          }
+        ],
+        "adjusted_reference_point": [
+          5.5,
+          3.0,
+          5.718,
+          -4.97
+        ],
+        "adjusted_solution_min": [
+          -5.7587966776236055,
+          -3.2006949229410986,
+          -6.886653563407998,
+          2.920630995516759
+        ]
+      },
+      "note": "Independent original-paper-style R-XIMO nine-case baseline. Minimized-objective SHAP signs retained; ties/zero conventions require author-code verification."
+    },
+    "f_2": {
+      "target": "f_2",
+      "case_number": 2,
+      "case_name": "all aspirations worse; target strongest impairer",
+      "reference_point_status": "original_rximo",
+      "explanation": "Original R-XIMO case 2: all aspirations worse; target strongest impairer. The rival for f_2 is f_1, selected from the minimized-target SHAP row.",
+      "suggestion": "Try improving the aspiration level for f_2 and relaxing the aspiration level for f_1.",
+      "actionable_target_members": [
+        "r_f_2"
+      ],
+      "selected_action_rival_members": [
+        "r_f_1"
+      ],
+      "attributions_minimized_target": [
+        {
+          "input": "r_f_1",
+          "shap_value": 0.003980562996412691
+        },
+        {
+          "input": "r_f_2",
+          "shap_value": 0.06090146353241404
+        },
+        {
+          "input": "r_f_3",
+          "shap_value": 0.0012281643829870764
+        },
+        {
+          "input": "r_f_4",
+          "shap_value": 0.0031664699747862004
+        }
+      ],
+      "rival_index": 0,
+      "best_effect_index": null,
+      "worst_effect_index": 1,
+      "counterfactual_reference_point": [
+        5.341,
+        3.059,
+        5.0,
+        -4.0
+      ],
+      "counterfactual_solution": [
+        6.003533542054608,
+        3.162701963273488,
+        6.261998622725622,
+        -2.295072143892977
+      ],
+      "outcome": {
+        "outcome_type": "joint_improvement",
+        "joint_target_improvement": true,
+        "improved_targets": [
+          "f_2"
+        ],
+        "worsened_targets": [],
+        "unchanged_targets": [],
+        "changes": [
+          {
+            "symbol": "f_1",
+            "original_value": 5.91626879281445,
+            "adjusted_value": 6.003533542054608,
+            "value_change": 0.08726474924015815,
+            "signed_improvement": 0.08726474924015815,
+            "status": "improved",
+            "is_target": false
+          },
+          {
+            "symbol": "f_2",
+            "original_value": 3.1276150778185388,
+            "adjusted_value": 3.162701963273488,
+            "value_change": 0.03508688545494909,
+            "signed_improvement": 0.03508688545494909,
+            "status": "improved",
+            "is_target": true
+          },
+          {
+            "symbol": "f_3",
+            "original_value": 6.553008318355363,
+            "adjusted_value": 6.261998622725622,
+            "value_change": -0.29100969562974033,
+            "signed_improvement": -0.29100969562974033,
+            "status": "worsened",
+            "is_target": false
+          },
+          {
+            "symbol": "f_4",
+            "original_value": -1.9019249488072898,
+            "adjusted_value": -2.295072143892977,
+            "value_change": -0.3931471950856871,
+            "signed_improvement": -0.3931471950856871,
+            "status": "worsened",
+            "is_target": false
+          }
+        ],
+        "adjusted_reference_point": [
+          5.341,
+          3.059,
+          5.0,
+          -4.0
+        ],
+        "adjusted_solution_min": [
+          -6.003533542054608,
+          -3.162701963273488,
+          -6.261998622725622,
+          2.295072143892977
+        ]
+      },
+      "note": "Independent original-paper-style R-XIMO nine-case baseline. Minimized-objective SHAP signs retained; ties/zero conventions require author-code verification."
+    }
+  },
+  "owen_explanations": [
+    {
+      "targets": [
+        "f_1",
+        "f_3"
+      ],
+      "owen_values": [
+        {
+          "input": "r_f_3",
+          "owen_value": 0.0906157095936474,
+          "absolute_owen_value": 0.0906157095936474,
+          "average_marginal_role": "positive average marginal effect"
+        },
+        {
+          "input": "r_f_1",
+          "owen_value": 0.015588458751745717,
+          "absolute_owen_value": 0.015588458751745717,
+          "average_marginal_role": "positive average marginal effect"
+        },
+        {
+          "input": "r_f_2",
+          "owen_value": 0.014691062584125749,
+          "absolute_owen_value": 0.014691062584125749,
+          "average_marginal_role": "positive average marginal effect"
+        },
+        {
+          "input": "r_f_4",
+          "owen_value": 0.008344152145236285,
+          "absolute_owen_value": 0.008344152145236285,
+          "average_marginal_role": "positive average marginal effect"
+        }
+      ],
+      "coalition_contributions": [
+        {
+          "coalition": [
+            "r_f_1",
+            "r_f_2",
+            "r_f_3",
+            "r_f_4"
+          ],
+          "coalition_text": "{r_f_1, r_f_2, r_f_3, r_f_4}",
+          "coalition_size": 4,
+          "coalition_value": -0.11807370215730907,
+          "contribution": 0.12923938307475524,
+          "absolute_contribution": 0.12923938307475524,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_2",
+            "r_f_3",
+            "r_f_4"
+          ],
+          "coalition_text": "{r_f_2, r_f_3, r_f_4}",
+          "coalition_size": 3,
+          "coalition_value": -0.13803181552446428,
+          "contribution": 0.10928126970760002,
+          "absolute_contribution": 0.10928126970760002,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_1",
+            "r_f_2",
+            "r_f_3"
+          ],
+          "coalition_text": "{r_f_1, r_f_2, r_f_3}",
+          "coalition_size": 3,
+          "coalition_value": -0.1474538907587485,
+          "contribution": 0.09985919447331579,
+          "absolute_contribution": 0.09985919447331579,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_1",
+            "r_f_3",
+            "r_f_4"
+          ],
+          "coalition_text": "{r_f_1, r_f_3, r_f_4}",
+          "coalition_size": 3,
+          "coalition_value": -0.1485446959329804,
+          "contribution": 0.09876838929908391,
+          "absolute_contribution": 0.09876838929908391,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_1",
+            "r_f_3"
+          ],
+          "coalition_text": "{r_f_1, r_f_3}",
+          "coalition_size": 2,
+          "coalition_value": -0.15361893204885357,
+          "contribution": 0.09369415318321073,
+          "absolute_contribution": 0.09369415318321073,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_2",
+            "r_f_3"
+          ],
+          "coalition_text": "{r_f_2, r_f_3}",
+          "coalition_size": 2,
+          "coalition_value": -0.16258407965697014,
+          "contribution": 0.08472900557509416,
+          "absolute_contribution": 0.08472900557509416,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_3",
+            "r_f_4"
+          ],
+          "coalition_text": "{r_f_3, r_f_4}",
+          "coalition_size": 2,
+          "coalition_value": -0.1633636323103025,
+          "contribution": 0.08394945292176181,
+          "absolute_contribution": 0.08394945292176181,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_3"
+          ],
+          "coalition_text": "{r_f_3}",
+          "coalition_size": 1,
+          "coalition_value": -0.16600941189210552,
+          "contribution": 0.08130367333995878,
+          "absolute_contribution": 0.08130367333995878,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_1",
+            "r_f_2"
+          ],
+          "coalition_text": "{r_f_1, r_f_2}",
+          "coalition_size": 2,
+          "coalition_value": -0.21224598346218213,
+          "contribution": 0.035067101769882175,
+          "absolute_contribution": 0.035067101769882175,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_1",
+            "r_f_2",
+            "r_f_4"
+          ],
+          "coalition_text": "{r_f_1, r_f_2, r_f_4}",
+          "coalition_size": 3,
+          "coalition_value": -0.21775066883790536,
+          "contribution": 0.029562416394158936,
+          "absolute_contribution": 0.029562416394158936,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_1"
+          ],
+          "coalition_text": "{r_f_1}",
+          "coalition_size": 1,
+          "coalition_value": -0.2363450602624677,
+          "contribution": 0.01096802496959659,
+          "absolute_contribution": 0.01096802496959659,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_2",
+            "r_f_4"
+          ],
+          "coalition_text": "{r_f_2, r_f_4}",
+          "coalition_size": 2,
+          "coalition_value": -0.23678788566488465,
+          "contribution": 0.01052519956717965,
+          "absolute_contribution": 0.01052519956717965,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_2"
+          ],
+          "coalition_text": "{r_f_2}",
+          "coalition_size": 1,
+          "coalition_value": -0.24014689675602888,
+          "contribution": 0.007166188476035423,
+          "absolute_contribution": 0.007166188476035423,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_4"
+          ],
+          "coalition_text": "{r_f_4}",
+          "coalition_size": 1,
+          "coalition_value": -0.251749912459576,
+          "contribution": -0.004436827227511708,
+          "absolute_contribution": 0.004436827227511708,
+          "coalition_level_role": "decreases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_1",
+            "r_f_4"
+          ],
+          "coalition_text": "{r_f_1, r_f_4}",
+          "coalition_size": 2,
+          "coalition_value": -0.24502816292906868,
+          "contribution": 0.0022849223029956234,
+          "absolute_contribution": 0.0022849223029956234,
+          "coalition_level_role": "increases target utility relative to baseline"
+        }
+      ],
+      "suggestion": "Try improving the aspiration levels for {f_1, f_3} and relaxing the aspiration level for f_4.",
+      "explanation": "The solution is better than the aspiration level in every objective, so the reference point appears pessimistic. Among the objectives outside the selected target set, f_4 has the weakest supporting effect.",
+      "case_number": 4,
+      "counterfactual_reference_point": [
+        5.659,
+        3.0,
+        5.718,
+        -4.97
+      ],
+      "counterfactual_solution": [
+        5.869972773879085,
+        3.208732877179084,
+        6.670694172384994,
+        -3.0051229295044246
+      ],
+      "outcome": {
+        "outcome_type": "target_conflict",
+        "joint_target_improvement": false,
+        "improved_targets": [
+          "f_3"
+        ],
+        "worsened_targets": [
+          "f_1"
+        ],
+        "unchanged_targets": [],
+        "changes": [
+          {
+            "symbol": "f_1",
+            "original_value": 5.91626879281445,
+            "adjusted_value": 5.869972773879085,
+            "value_change": -0.04629601893536517,
+            "signed_improvement": -0.04629601893536517,
+            "status": "worsened",
+            "is_target": true
+          },
+          {
+            "symbol": "f_2",
+            "original_value": 3.1276150778185388,
+            "adjusted_value": 3.208732877179084,
+            "value_change": 0.0811177993605452,
+            "signed_improvement": 0.0811177993605452,
+            "status": "improved",
+            "is_target": false
+          },
+          {
+            "symbol": "f_3",
+            "original_value": 6.553008318355363,
+            "adjusted_value": 6.670694172384994,
+            "value_change": 0.11768585402963172,
+            "signed_improvement": 0.11768585402963172,
+            "status": "improved",
+            "is_target": true
+          },
+          {
+            "symbol": "f_4",
+            "original_value": -1.9019249488072898,
+            "adjusted_value": -3.0051229295044246,
+            "value_change": -1.1031979806971348,
+            "signed_improvement": -1.1031979806971348,
+            "status": "worsened",
+            "is_target": false
+          }
+        ],
+        "adjusted_reference_point": [
+          5.659,
+          3.0,
+          5.718,
+          -4.97
+        ],
+        "adjusted_solution_min": [
+          -5.869972773879085,
+          -3.208732877179084,
+          -6.670694172384994,
+          3.0051229295044246
+        ]
+      }
+    },
+    {
+      "targets": [
+        "f_1",
+        "f_2",
+        "f_3"
+      ],
+      "owen_values": [
+        {
+          "input": "r_f_3",
+          "owen_value": 0.029063395278619238,
+          "absolute_owen_value": 0.029063395278619238,
+          "average_marginal_role": "positive average marginal effect"
+        },
+        {
+          "input": "r_f_2",
+          "owen_value": -0.011814341388293619,
+          "absolute_owen_value": 0.011814341388293619,
+          "average_marginal_role": "negative average marginal effect"
+        },
+        {
+          "input": "r_f_1",
+          "owen_value": 0.0019229214651789103,
+          "absolute_owen_value": 0.0019229214651789103,
+          "average_marginal_role": "positive average marginal effect"
+        },
+        {
+          "input": "r_f_4",
+          "owen_value": 0.0015314322863496585,
+          "absolute_owen_value": 0.0015314322863496585,
+          "average_marginal_role": "positive average marginal effect"
+        }
+      ],
+      "coalition_contributions": [
+        {
+          "coalition": [
+            "r_f_3",
+            "r_f_4"
+          ],
+          "coalition_text": "{r_f_3, r_f_4}",
+          "coalition_size": 2,
+          "coalition_value": -0.14805668581919978,
+          "contribution": 0.04338774066508527,
+          "absolute_contribution": 0.04338774066508527,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_1",
+            "r_f_3"
+          ],
+          "coalition_text": "{r_f_1, r_f_3}",
+          "coalition_size": 2,
+          "coalition_value": -0.1498418805728816,
+          "contribution": 0.04160254591140347,
+          "absolute_contribution": 0.04160254591140347,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_1",
+            "r_f_3",
+            "r_f_4"
+          ],
+          "coalition_text": "{r_f_1, r_f_3, r_f_4}",
+          "coalition_size": 3,
+          "coalition_value": -0.15030561701649872,
+          "contribution": 0.041138809467786336,
+          "absolute_contribution": 0.041138809467786336,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_3"
+          ],
+          "coalition_text": "{r_f_3}",
+          "coalition_size": 1,
+          "coalition_value": -0.15492802310304768,
+          "contribution": 0.03651640338123738,
+          "absolute_contribution": 0.03651640338123738,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_2",
+            "r_f_3",
+            "r_f_4"
+          ],
+          "coalition_text": "{r_f_2, r_f_3, r_f_4}",
+          "coalition_size": 3,
+          "coalition_value": -0.1630193708392218,
+          "contribution": 0.028425055645063257,
+          "absolute_contribution": 0.028425055645063257,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_1",
+            "r_f_2",
+            "r_f_3",
+            "r_f_4"
+          ],
+          "coalition_text": "{r_f_1, r_f_2, r_f_3, r_f_4}",
+          "coalition_size": 4,
+          "coalition_value": -0.1707410188424307,
+          "contribution": 0.020703407641854354,
+          "absolute_contribution": 0.020703407641854354,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_1",
+            "r_f_2",
+            "r_f_3"
+          ],
+          "coalition_text": "{r_f_1, r_f_2, r_f_3}",
+          "coalition_size": 3,
+          "coalition_value": -0.17103978158675645,
+          "contribution": 0.020404644897528607,
+          "absolute_contribution": 0.020404644897528607,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_2",
+            "r_f_3"
+          ],
+          "coalition_text": "{r_f_2, r_f_3}",
+          "coalition_size": 2,
+          "coalition_value": -0.1756686831051155,
+          "contribution": 0.015775743379169566,
+          "absolute_contribution": 0.015775743379169566,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_1",
+            "r_f_2"
+          ],
+          "coalition_text": "{r_f_1, r_f_2}",
+          "coalition_size": 2,
+          "coalition_value": -0.18079267869930962,
+          "contribution": 0.010651747784975435,
+          "absolute_contribution": 0.010651747784975435,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_1"
+          ],
+          "coalition_text": "{r_f_1}",
+          "coalition_size": 1,
+          "coalition_value": -0.185482511991896,
+          "contribution": 0.005961914492389059,
+          "absolute_contribution": 0.005961914492389059,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_2"
+          ],
+          "coalition_text": "{r_f_2}",
+          "coalition_size": 1,
+          "coalition_value": -0.19648275642234544,
+          "contribution": -0.005038329938060387,
+          "absolute_contribution": 0.005038329938060387,
+          "coalition_level_role": "decreases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_1",
+            "r_f_2",
+            "r_f_4"
+          ],
+          "coalition_text": "{r_f_1, r_f_2, r_f_4}",
+          "coalition_size": 3,
+          "coalition_value": -0.18674582957725425,
+          "contribution": 0.004698596907030811,
+          "absolute_contribution": 0.004698596907030811,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_1",
+            "r_f_4"
+          ],
+          "coalition_text": "{r_f_1, r_f_4}",
+          "coalition_size": 2,
+          "coalition_value": -0.18982843639536842,
+          "contribution": 0.0016159900889166356,
+          "absolute_contribution": 0.0016159900889166356,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_4"
+          ],
+          "coalition_text": "{r_f_4}",
+          "coalition_size": 1,
+          "coalition_value": -0.19052537364331656,
+          "contribution": 0.0009190528409684928,
+          "absolute_contribution": 0.0009190528409684928,
+          "coalition_level_role": "increases target utility relative to baseline"
+        },
+        {
+          "coalition": [
+            "r_f_2",
+            "r_f_4"
+          ],
+          "coalition_text": "{r_f_2, r_f_4}",
+          "coalition_size": 2,
+          "coalition_value": -0.19111110641862358,
+          "contribution": 0.0003333200656614743,
+          "absolute_contribution": 0.0003333200656614743,
+          "coalition_level_role": "increases target utility relative to baseline"
+        }
+      ],
+      "suggestion": "Try improving the aspiration levels for {f_1, f_2, f_3} and relaxing the aspiration level for f_4.",
+      "explanation": "The solution is better than the aspiration level in every objective, so the reference point appears pessimistic. Among the objectives outside the selected target set, f_4 has the weakest supporting effect.",
+      "case_number": 4,
+      "counterfactual_reference_point": [
+        5.659,
+        3.059,
+        5.718,
+        -4.97
+      ],
+      "counterfactual_solution": [
+        5.869972773879085,
+        3.2103329861015335,
+        6.670694172384994,
+        -3.0306151982295138
+      ],
+      "outcome": {
+        "outcome_type": "target_conflict",
+        "joint_target_improvement": false,
+        "improved_targets": [
+          "f_2",
+          "f_3"
+        ],
+        "worsened_targets": [
+          "f_1"
+        ],
+        "unchanged_targets": [],
+        "changes": [
+          {
+            "symbol": "f_1",
+            "original_value": 5.91626879281445,
+            "adjusted_value": 5.869972773879085,
+            "value_change": -0.04629601893536517,
+            "signed_improvement": -0.04629601893536517,
+            "status": "worsened",
+            "is_target": true
+          },
+          {
+            "symbol": "f_2",
+            "original_value": 3.1276150778185388,
+            "adjusted_value": 3.2103329861015335,
+            "value_change": 0.08271790828299475,
+            "signed_improvement": 0.08271790828299475,
+            "status": "improved",
+            "is_target": true
+          },
+          {
+            "symbol": "f_3",
+            "original_value": 6.553008318355363,
+            "adjusted_value": 6.670694172384994,
+            "value_change": 0.11768585402963172,
+            "signed_improvement": 0.11768585402963172,
+            "status": "improved",
+            "is_target": true
+          },
+          {
+            "symbol": "f_4",
+            "original_value": -1.9019249488072898,
+            "adjusted_value": -3.0306151982295138,
+            "value_change": -1.128690249422224,
+            "signed_improvement": -1.128690249422224,
+            "status": "worsened",
+            "is_target": false
+          }
+        ],
+        "adjusted_reference_point": [
+          5.659,
+          3.059,
+          5.718,
+          -4.97
+        ],
+        "adjusted_solution_min": [
+          -5.869972773879085,
+          -3.2103329861015335,
+          -6.670694172384994,
+          3.0306151982295138
+        ]
+      }
+    }
+  ]
+}
